@@ -23,6 +23,15 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
   const queryClient = useQueryClient();
   const [children, setChildren] = useState<any[]>([]);
 
+  const { data: sizes } = useQuery({
+    queryKey: ["sizes"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("sizes").select("*").order("tipo").order("nome");
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const { isLoading } = useQuery({
     queryKey: ["client-children", clientId],
     queryFn: async () => {
@@ -39,14 +48,25 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
   const saveChildren = useMutation({
     mutationFn: async (childrenData: any[]) => {
       // Delete removed children
-      const currentIds = childrenData.filter(c => c.id).map(c => c.id);
-      const { error: deleteError } = await supabase
-        .from("client_children")
-        .delete()
-        .eq("client_id", clientId)
-        .not("id", "in", `(${currentIds.length ? currentIds.join(",") : "'none'"})`);
+      const existingIds = childrenData.filter(c => c.id).map(c => c.id);
       
-      if (deleteError) throw deleteError;
+      if (existingIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from("client_children")
+          .delete()
+          .eq("client_id", clientId)
+          .not("id", "in", `(${existingIds.join(",")})`);
+        
+        if (deleteError) throw deleteError;
+      } else {
+        // Se não há IDs existentes, deletar todos os filhos do cliente
+        const { error: deleteError } = await supabase
+          .from("client_children")
+          .delete()
+          .eq("client_id", clientId);
+        
+        if (deleteError) throw deleteError;
+      }
 
       // Update or insert children
       for (const child of childrenData) {
@@ -78,9 +98,9 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
       nome: "",
       genero: "",
       data_nascimento: "",
-      tamanho_roupa: "",
+      tamanho_roupa_id: "",
       data_registro_tamanho: new Date().toISOString().split("T")[0],
-      numeracao_calca: "",
+      numeracao_calcado_id: "",
       data_registro_numeracao: new Date().toISOString().split("T")[0],
     }]);
   };
@@ -155,10 +175,21 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
             </div>
             <div>
               <Label>Tamanho de Roupa</Label>
-              <Input
-                value={child.tamanho_roupa || ""}
-                onChange={(e) => updateChild(index, "tamanho_roupa", e.target.value)}
-              />
+              <Select
+                value={child.tamanho_roupa_id || ""}
+                onValueChange={(value) => updateChild(index, "tamanho_roupa_id", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sizes?.filter(s => s.tipo === "roupa").map((size) => (
+                    <SelectItem key={size.id} value={size.id}>
+                      {size.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Data Registro Tamanho</Label>
@@ -169,11 +200,22 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
               />
             </div>
             <div>
-              <Label>Numeração que Calça</Label>
-              <Input
-                value={child.numeracao_calca || ""}
-                onChange={(e) => updateChild(index, "numeracao_calca", e.target.value)}
-              />
+              <Label>Numeração de Calçado</Label>
+              <Select
+                value={child.numeracao_calcado_id || ""}
+                onValueChange={(value) => updateChild(index, "numeracao_calcado_id", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sizes?.filter(s => s.tipo === "calçado").map((size) => (
+                    <SelectItem key={size.id} value={size.id}>
+                      {size.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Data Registro Numeração</Label>

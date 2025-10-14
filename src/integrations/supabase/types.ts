@@ -81,8 +81,8 @@ export type Database = {
           genero: Database["public"]["Enums"]["gender_type"] | null
           id: string
           nome: string
-          numeracao_calca: string | null
-          tamanho_roupa: string | null
+          numeracao_calcado_id: string | null
+          tamanho_roupa_id: string | null
         }
         Insert: {
           client_id?: string | null
@@ -93,8 +93,8 @@ export type Database = {
           genero?: Database["public"]["Enums"]["gender_type"] | null
           id?: string
           nome: string
-          numeracao_calca?: string | null
-          tamanho_roupa?: string | null
+          numeracao_calcado_id?: string | null
+          tamanho_roupa_id?: string | null
         }
         Update: {
           client_id?: string | null
@@ -105,8 +105,8 @@ export type Database = {
           genero?: Database["public"]["Enums"]["gender_type"] | null
           id?: string
           nome?: string
-          numeracao_calca?: string | null
-          tamanho_roupa?: string | null
+          numeracao_calcado_id?: string | null
+          tamanho_roupa_id?: string | null
         }
         Relationships: [
           {
@@ -114,6 +114,20 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_children_numeracao_calcado_id_fkey"
+            columns: ["numeracao_calcado_id"]
+            isOneToOne: false
+            referencedRelation: "sizes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_children_tamanho_roupa_id_fkey"
+            columns: ["tamanho_roupa_id"]
+            isOneToOne: false
+            referencedRelation: "sizes"
             referencedColumns: ["id"]
           },
         ]
@@ -264,6 +278,30 @@ export type Database = {
           nome?: string
           updated_at?: string | null
           whatsapp_message_template?: string | null
+        }
+        Relationships: []
+      }
+      sizes: {
+        Row: {
+          created_at: string | null
+          id: string
+          nome: string
+          tipo: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          nome: string
+          tipo: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          nome?: string
+          tipo?: string
+          updated_at?: string | null
         }
         Relationships: []
       }

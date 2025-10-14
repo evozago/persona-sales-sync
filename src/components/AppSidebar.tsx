@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, ShoppingCart, Upload, TrendingUp, Bell, Tag } from "lucide-react";
+import { LayoutDashboard, Users, ShoppingCart, Upload, TrendingUp, Bell, Tag, Ruler } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
   Sidebar,
@@ -21,6 +21,7 @@ const menuItems = [
   { title: "Ranking", url: "/ranking", icon: TrendingUp },
   { title: "Alertas", url: "/alerts", icon: Bell },
   { title: "Marcas", url: "/brands", icon: Tag },
+  { title: "Tamanhos", url: "/sizes", icon: Ruler },
 ];
 
 export function AppSidebar() {
