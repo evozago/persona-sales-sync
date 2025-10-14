@@ -27,67 +27,75 @@ serve(async (req) => {
 
     console.log('Processing file:', file.name);
 
-    // Read file as array buffer
     const arrayBuffer = await file.arrayBuffer();
     const data = new Uint8Array(arrayBuffer);
     
-    // Parse Excel file
     const workbook = XLSX.read(data, { type: 'array' });
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const jsonData = XLSX.utils.sheet_to_json(firstSheet);
 
-    console.log('Rows found:', jsonData.length);
+    console.log('Total rows found:', jsonData.length);
 
     let imported = 0;
     let errors = 0;
+    const BATCH_SIZE = 100;
 
-    for (const row of jsonData as any[]) {
-      try {
-        // Map Excel columns to database columns
-        const clientData = {
-          third_id: row.third_id || null,
-          nome: row.nome || 'Cliente sem nome',
-          cpf: row.cpf || null,
-          rg: row.rg || null,
-          data_nascimento: row.data_nascimento ? new Date(row.data_nascimento) : null,
-          genero: row.genero || null,
-          telefone_1: row.telefone_1 || null,
-          telefone_2: row.telefone_2 || null,
-          telefone_3: row.telefone_3 || null,
-          email: row.email || null,
-          endereco_cep: row.endereco_1_cep || null,
-          endereco_logradouro: row.endereco_1_logradouro || null,
-          endereco_numero: row.endereco_1_numero || null,
-          endereco_complemento: row.endereco_1_complemento || null,
-          endereco_bairro: row.endereco_1_bairro || null,
-          endereco_cidade: row.endereco_1_cidade || null,
-          endereco_uf: row.endereco_1_uf || null,
-          observacao: row.observacao || null,
-        };
+    // Process in batches to avoid timeout
+    for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
+      const batch = jsonData.slice(i, i + BATCH_SIZE) as any[];
+      const clientsToInsert = [];
 
-        // Skip empty rows
-        if (!clientData.nome || clientData.nome === 'Cliente sem nome') {
-          continue;
+      for (const row of batch) {
+        try {
+          // Skip rows without name or with role="CLIENT"
+          const nome = row.nome?.toString().trim();
+          if (!nome || nome === '' || row.roles !== 'CLIENT') {
+            continue;
+          }
+
+          const clientData = {
+            third_id: row.third_id?.toString() || null,
+            nome: nome,
+            cpf: row.cpf?.toString() || null,
+            rg: row.rg?.toString() || null,
+            data_nascimento: row.data_nascimento ? new Date(row.data_nascimento).toISOString().split('T')[0] : null,
+            genero: row.genero || null,
+            telefone_1: row.telefone_1?.toString() || null,
+            telefone_2: row.telefone_2?.toString() || null,
+            telefone_3: row.telefone_3?.toString() || null,
+            email: row.email?.toString() || null,
+            endereco_cep: row.endereco_1_cep?.toString() || null,
+            endereco_logradouro: row.endereco_1_logradouro?.toString() || null,
+            endereco_numero: row.endereco_1_numero?.toString() || null,
+            endereco_complemento: row.endereco_1_complemento?.toString() || null,
+            endereco_bairro: row.endereco_1_bairro?.toString() || null,
+            endereco_cidade: row.endereco_1_cidade?.toString() || null,
+            endereco_uf: row.endereco_1_uf?.toString() || null,
+            observacao: row.observacao?.toString() || null,
+          };
+
+          clientsToInsert.push(clientData);
+        } catch (err) {
+          console.error('Error processing row:', err);
+          errors++;
         }
+      }
 
-        // Insert or update client
+      // Bulk insert batch
+      if (clientsToInsert.length > 0) {
         const { error } = await supabaseClient
           .from('clients')
-          .upsert(clientData, { 
-            onConflict: 'third_id',
-            ignoreDuplicates: false 
-          });
+          .insert(clientsToInsert);
 
         if (error) {
-          console.error('Error inserting client:', error);
-          errors++;
+          console.error('Batch insert error:', error);
+          errors += clientsToInsert.length;
         } else {
-          imported++;
+          imported += clientsToInsert.length;
         }
-      } catch (err) {
-        console.error('Error processing row:', err);
-        errors++;
       }
+
+      console.log(`Processed batch ${Math.floor(i / BATCH_SIZE) + 1}: ${imported} imported, ${errors} errors`);
     }
 
     return new Response(

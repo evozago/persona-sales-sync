@@ -34,62 +34,61 @@ serve(async (req) => {
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const jsonData = XLSX.utils.sheet_to_json(firstSheet);
 
-    console.log('Sales rows found:', jsonData.length);
+    console.log('Total sales rows found:', jsonData.length);
 
     let imported = 0;
     let errors = 0;
+    const BATCH_SIZE = 50;
 
-    for (const row of jsonData as any[]) {
-      try {
-        // Convert Excel date serial numbers to JavaScript dates
-        const convertExcelDate = (serial: any) => {
-          if (!serial) return null;
-          if (typeof serial === 'string') return new Date(serial);
-          // Excel date serial: days since 1900-01-01
-          const excelEpoch = new Date(1899, 11, 30);
-          const date = new Date(excelEpoch.getTime() + serial * 86400000);
-          return date;
-        };
+    // Convert Excel date serial numbers
+    const convertExcelDate = (serial: any) => {
+      if (!serial) return null;
+      if (typeof serial === 'string') return new Date(serial);
+      const excelEpoch = new Date(1899, 11, 30);
+      return new Date(excelEpoch.getTime() + serial * 86400000);
+    };
 
-        const saleData = {
-          cliente_nome: row.cliente || 'Cliente desconhecido',
-          data_venda: convertExcelDate(row.ultima_compra) || new Date(),
-          vendedora: row.ultimo_vendedor || 'Não informado',
-          quantidade_itens: parseInt(row.itens) || 0,
-          valor_total: parseFloat(row.val_compras) || 0,
-          ticket_medio: parseFloat(row.ticket_medio) || 0,
-        };
+    // Process in batches
+    for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
+      const batch = jsonData.slice(i, i + BATCH_SIZE) as any[];
+      const salesToInsert = [];
 
-        if (!saleData.cliente_nome || saleData.cliente_nome === 'Cliente desconhecido') {
-          continue;
+      for (const row of batch) {
+        try {
+          const clienteNome = row.cliente?.toString().trim();
+          if (!clienteNome) continue;
+
+          const saleData = {
+            cliente_nome: clienteNome,
+            data_venda: convertExcelDate(row.ultima_compra) || new Date(),
+            vendedora: row.ultimo_vendedor?.toString() || 'Não informado',
+            quantidade_itens: parseInt(row.itens) || 0,
+            valor_total: parseFloat(row.val_compras) || 0,
+            ticket_medio: parseFloat(row.ticket_medio) || 0,
+          };
+
+          salesToInsert.push(saleData);
+        } catch (err) {
+          console.error('Error processing sale row:', err);
+          errors++;
         }
+      }
 
-        // Try to find client by name
-        const { data: clientData } = await supabaseClient
-          .from('clients')
-          .select('id')
-          .ilike('nome', saleData.cliente_nome)
-          .limit(1)
-          .single();
-
-        if (clientData) {
-          (saleData as any).client_id = clientData.id;
-        }
-
+      // Bulk insert batch
+      if (salesToInsert.length > 0) {
         const { error } = await supabaseClient
           .from('sales')
-          .insert(saleData);
+          .insert(salesToInsert);
 
         if (error) {
-          console.error('Error inserting sale:', error);
-          errors++;
+          console.error('Batch insert error:', error);
+          errors += salesToInsert.length;
         } else {
-          imported++;
+          imported += salesToInsert.length;
         }
-      } catch (err) {
-        console.error('Error processing sale row:', err);
-        errors++;
       }
+
+      console.log(`Processed batch ${Math.floor(i / BATCH_SIZE) + 1}: ${imported} imported, ${errors} errors`);
     }
 
     return new Response(
