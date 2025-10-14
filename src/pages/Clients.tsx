@@ -4,10 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Search, Plus, MessageCircle } from "lucide-react";
+import { Search, Plus, MessageCircle, Edit } from "lucide-react";
+import { ClientEditDialog } from "@/components/ClientEditDialog";
 
 export default function Clients() {
   const [searchTerm, setSearchTerm] = useState("");
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
 
   const { data: clients, isLoading } = useQuery({
     queryKey: ["clients", searchTerm],
@@ -89,6 +91,16 @@ export default function Clients() {
                     Vendedora: {client.vendedora_responsavel}
                   </p>
                 )}
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditingClientId(client.id)}
+                  className="w-full mt-2"
+                >
+                  <Edit className="w-4 h-4 mr-2" />
+                  Editar
+                </Button>
               </div>
             </Card>
           ))}
@@ -97,6 +109,14 @@ export default function Clients() {
         <Card className="p-12 text-center">
           <p className="text-muted-foreground">Nenhum cliente encontrado</p>
         </Card>
+      )}
+
+      {editingClientId && (
+        <ClientEditDialog
+          clientId={editingClientId}
+          open={!!editingClientId}
+          onOpenChange={(open) => !open && setEditingClientId(null)}
+        />
       )}
     </div>
   );

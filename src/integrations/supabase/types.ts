@@ -14,29 +14,98 @@ export type Database = {
   }
   public: {
     Tables: {
+      brands: {
+        Row: {
+          created_at: string | null
+          id: string
+          nome: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          nome: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          nome?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      client_brand_preferences: {
+        Row: {
+          brand_id: string
+          client_id: string
+          created_at: string | null
+          id: string
+        }
+        Insert: {
+          brand_id: string
+          client_id: string
+          created_at?: string | null
+          id?: string
+        }
+        Update: {
+          brand_id?: string
+          client_id?: string
+          created_at?: string | null
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_brand_preferences_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_brand_preferences_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_children: {
         Row: {
           client_id: string | null
           created_at: string | null
           data_nascimento: string | null
+          data_registro_numeracao: string | null
+          data_registro_tamanho: string | null
+          genero: Database["public"]["Enums"]["gender_type"] | null
           id: string
           nome: string
+          numeracao_calca: string | null
           tamanho_roupa: string | null
         }
         Insert: {
           client_id?: string | null
           created_at?: string | null
           data_nascimento?: string | null
+          data_registro_numeracao?: string | null
+          data_registro_tamanho?: string | null
+          genero?: Database["public"]["Enums"]["gender_type"] | null
           id?: string
           nome: string
+          numeracao_calca?: string | null
           tamanho_roupa?: string | null
         }
         Update: {
           client_id?: string | null
           created_at?: string | null
           data_nascimento?: string | null
+          data_registro_numeracao?: string | null
+          data_registro_tamanho?: string | null
+          genero?: Database["public"]["Enums"]["gender_type"] | null
           id?: string
           nome?: string
+          numeracao_calca?: string | null
           tamanho_roupa?: string | null
         }
         Relationships: [
