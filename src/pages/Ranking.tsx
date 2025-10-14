@@ -56,44 +56,42 @@ export default function Ranking() {
 
       if (!sales) return null;
 
-      const clientsMap = new Map<string, { total: number; lastPurchase: Date; phone: string | null; clientId: string | null }>();
+      const clientsMap = new Map<string, { total: number; lastPurchase: Date; clientId: string | null }>();
 
       for (const sale of sales) {
         const current = clientsMap.get(sale.cliente_nome);
         const saleDate = new Date(sale.data_venda);
         
-        if (!current || saleDate > current.lastPurchase) {
+        if (!current) {
           clientsMap.set(sale.cliente_nome, {
-            total: (current?.total || 0) + Number(sale.valor_total),
-            lastPurchase: current && saleDate < current.lastPurchase ? current.lastPurchase : saleDate,
-            phone: current?.phone || null,
-            clientId: sale.client_id || current?.clientId || null,
+            total: Number(sale.valor_total),
+            lastPurchase: saleDate,
+            clientId: sale.client_id || null,
           });
         } else {
-          clientsMap.set(sale.cliente_nome, {
-            ...current,
-            total: current.total + Number(sale.valor_total),
-          });
+          current.total += Number(sale.valor_total);
+          if (saleDate > current.lastPurchase) {
+            current.lastPurchase = saleDate;
+          }
+          if (sale.client_id && !current.clientId) {
+            current.clientId = sale.client_id;
+          }
         }
       }
 
-      const clientIds = Array.from(clientsMap.values())
-        .map(c => c.clientId)
-        .filter(Boolean) as string[];
+      const uniqueClientNames = Array.from(clientsMap.keys());
+      
+      const { data: clientsInfo } = await supabase
+        .from("clients")
+        .select("nome, telefone_1")
+        .in("nome", uniqueClientNames);
 
-      if (clientIds.length > 0) {
-        const { data: clientsInfo } = await supabase
-          .from("clients")
-          .select("id, telefone_1")
-          .in("id", clientIds);
-
-        clientsInfo?.forEach(client => {
-          const entry = Array.from(clientsMap.entries()).find(([_, v]) => v.clientId === client.id);
-          if (entry) {
-            entry[1].phone = client.telefone_1 as string | null;
-          }
-        });
-      }
+      const phoneMap = new Map<string, string>();
+      clientsInfo?.forEach(client => {
+        if (client.telefone_1) {
+          phoneMap.set(client.nome, client.telefone_1);
+        }
+      });
 
       return Array.from(clientsMap.entries())
         .map(([nome, data]) => ({
@@ -101,7 +99,7 @@ export default function Ranking() {
           total: data.total,
           lastPurchase: data.lastPurchase,
           daysSinceLastPurchase: Math.floor((Date.now() - data.lastPurchase.getTime()) / (1000 * 60 * 60 * 24)),
-          phone: data.phone,
+          phone: phoneMap.get(nome) || null,
         }))
         .sort((a, b) => b.total - a.total);
     },
