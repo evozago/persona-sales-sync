@@ -167,6 +167,18 @@ export default function Ranking() {
     return null;
   };
 
+  const isMobile = () => /Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent);
+
+  const sanitizeWhatsAppMessage = (text: string) => {
+    let t = (text as string);
+    try { t = t.normalize?.('NFKC') ?? t; } catch { /* ignore */ }
+    // Remove surrogate pairs (incl. emojis) to avoid encoding issues that can trigger blocking
+    t = t.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '');
+    // Normalize newlines
+    t = t.replace(/\r\n|\r/g, '\n').trim();
+    return t;
+  };
+
   const handleWhatsAppClick = (clientName: string, phone: string | null, daysSince: number, saleswomanName: string) => {
     if (!phone) {
       toast.error("Cliente não possui telefone cadastrado");
@@ -180,12 +192,19 @@ export default function Ranking() {
     }
 
     const template = getMessageTemplate(saleswomanName);
-    const message = template
-      .replace("{NOME}", clientName)
-      .replace("{DIAS}", daysSince.toString());
-    
-    const url = `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
-    window.open(url, "_blank");
+    const message = sanitizeWhatsAppMessage(
+      template
+        .replace("{NOME}", clientName)
+        .replace("{DIAS}", daysSince.toString())
+    );
+
+    const encoded = encodeURIComponent(message);
+    // Use deep link on mobile and Web WhatsApp on desktop to avoid api.whatsapp.com blocking in iframes
+    const url = isMobile()
+      ? `whatsapp://send?phone=${normalized}&text=${encoded}`
+      : `https://web.whatsapp.com/send?phone=${normalized}&text=${encoded}`;
+
+    window.open(url, "_blank", "noopener,noreferrer");
   };
   const getRankColor = (index: number) => {
     if (index === 0) return "from-yellow-400 to-yellow-600";
