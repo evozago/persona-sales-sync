@@ -149,12 +149,22 @@ export default function Ranking() {
   };
 
   const normalizeBRPhone = (raw: string) => {
+    if (!raw) return null;
     const digits = raw.replace(/\D/g, '');
+    if (digits.length === 0) return null;
+    
     let n = digits.replace(/^0+/, '');
-    if (n.startsWith('55') && n.length >= 12) return n;
-    if (n.length === 13 && n.startsWith('55')) return n;
+    
+    // Se já tem código do país (55)
+    if (n.startsWith('55') && n.length >= 12 && n.length <= 13) return n;
+    
+    // Se é número brasileiro sem código do país (10 ou 11 dígitos)
     if (n.length >= 10 && n.length <= 11) return '55' + n;
-    return n.length >= 12 ? n : null;
+    
+    // Se tem 12 ou 13 dígitos sem 55, assume que é válido
+    if (n.length >= 12 && n.length <= 13) return n;
+    
+    return null;
   };
 
   const handleWhatsAppClick = (clientName: string, phone: string | null, daysSince: number, saleswomanName: string) => {
@@ -185,12 +195,12 @@ export default function Ranking() {
   };
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-6">
       <div>
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <h1 className="text-2xl md:text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
           Ranking de Vendedoras
         </h1>
-        <p className="text-muted-foreground mt-2">Desempenho por vendedora</p>
+        <p className="text-muted-foreground mt-2 text-sm md:text-base">Desempenho por vendedora</p>
       </div>
 
       {isLoading ? (
@@ -200,36 +210,36 @@ export default function Ranking() {
           {saleswomenStats.map((saleswoman, index) => (
             <Card
               key={saleswoman.nome}
-              className="p-6 hover:shadow-elevated transition-all duration-300"
+              className="p-4 md:p-6 hover:shadow-elevated transition-all duration-300"
             >
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col md:flex-row items-start md:items-center gap-4 md:gap-6">
                 <div
-                  className={`w-16 h-16 rounded-full bg-gradient-to-br ${getRankColor(index)} flex items-center justify-center shadow-lg flex-shrink-0`}
+                  className={`w-12 h-12 md:w-16 md:h-16 rounded-full bg-gradient-to-br ${getRankColor(index)} flex items-center justify-center shadow-lg flex-shrink-0`}
                 >
-                  <span className="text-2xl font-bold text-white">#{index + 1}</span>
+                  <span className="text-xl md:text-2xl font-bold text-white">#{index + 1}</span>
                 </div>
 
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Vendedora</p>
-                    <p className="font-semibold text-lg">{saleswoman.nome}</p>
+                <div className="flex-1 w-full grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                  <div className="col-span-2 md:col-span-1">
+                    <p className="text-xs md:text-sm text-muted-foreground">Vendedora</p>
+                    <p className="font-semibold text-base md:text-lg truncate">{saleswoman.nome}</p>
                   </div>
 
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Vendido</p>
-                    <p className="font-semibold text-success text-lg">
+                    <p className="text-xs md:text-sm text-muted-foreground">Total Vendido</p>
+                    <p className="font-semibold text-success text-sm md:text-lg">
                       R$ {saleswoman.totalVendas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-sm text-muted-foreground">Vendas</p>
-                    <p className="font-semibold text-lg">{saleswoman.quantidadeVendas}</p>
+                    <p className="text-xs md:text-sm text-muted-foreground">Vendas</p>
+                    <p className="font-semibold text-sm md:text-lg">{saleswoman.quantidadeVendas}</p>
                   </div>
 
-                  <div>
-                    <p className="text-sm text-muted-foreground">Ticket Médio</p>
-                    <p className="font-semibold text-lg">
+                  <div className="col-span-2 md:col-span-1">
+                    <p className="text-xs md:text-sm text-muted-foreground">Ticket Médio</p>
+                    <p className="font-semibold text-sm md:text-lg">
                       R$ {saleswoman.ticketMedio.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                     </p>
                   </div>
@@ -238,47 +248,54 @@ export default function Ranking() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="hover:bg-primary/10 hover:text-primary hover:border-primary"
+                  className="w-full md:w-auto hover:bg-primary/10 hover:text-primary hover:border-primary text-xs md:text-sm"
                   onClick={() => setExpandedSaleswoman(expandedSaleswoman === saleswoman.nome ? null : saleswoman.nome)}
                 >
                   {expandedSaleswoman === saleswoman.nome ? (
-                    <ChevronUp className="w-4 h-4 mr-2" />
+                    <>
+                      <ChevronUp className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
+                      <span className="hidden sm:inline">Ocultar</span>
+                      <span className="sm:hidden">Fechar</span>
+                    </>
                   ) : (
-                    <ChevronDown className="w-4 h-4 mr-2" />
+                    <>
+                      <ChevronDown className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
+                      <span className="hidden sm:inline">Ver Clientes</span>
+                      <span className="sm:hidden">Clientes</span>
+                    </>
                   )}
-                  {expandedSaleswoman === saleswoman.nome ? "Ocultar" : "Ver Clientes"}
                 </Button>
               </div>
 
               {expandedSaleswoman === saleswoman.nome && (
                 <div className="mt-4 pt-4 border-t space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Mensagem WhatsApp (use {"{NOME}"} e {"{DIAS}"})</label>
+                    <label className="text-xs md:text-sm font-medium">Mensagem WhatsApp (use {"{NOME}"} e {"{DIAS}"})</label>
                     <Textarea
                       value={getMessageTemplate(saleswoman.nome)}
                       onChange={(e) => setMessageTemplates({ ...messageTemplates, [saleswoman.nome]: e.target.value })}
-                      className="min-h-[100px]"
+                      className="min-h-[100px] text-sm"
                     />
                   </div>
 
                   {clientsData ? (
-                    <div className="rounded-md border">
+                    <div className="rounded-md border overflow-x-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead onClick={() => toggleSort('nome')} className="cursor-pointer select-none">
+                            <TableHead onClick={() => toggleSort('nome')} className="cursor-pointer select-none text-xs md:text-sm whitespace-nowrap">
                               Cliente {sort.key==='nome' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
                             </TableHead>
-                            <TableHead onClick={() => toggleSort('total')} className="cursor-pointer select-none">
-                              Total Comprado {sort.key==='total' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            <TableHead onClick={() => toggleSort('total')} className="cursor-pointer select-none text-xs md:text-sm whitespace-nowrap">
+                              Total {sort.key==='total' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
                             </TableHead>
-                            <TableHead onClick={() => toggleSort('lastPurchase')} className="cursor-pointer select-none">
+                            <TableHead onClick={() => toggleSort('lastPurchase')} className="cursor-pointer select-none text-xs md:text-sm whitespace-nowrap hidden md:table-cell">
                               Última Compra {sort.key==='lastPurchase' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
                             </TableHead>
-                            <TableHead onClick={() => toggleSort('days')} className="cursor-pointer select-none">
-                              Dias sem Comprar {sort.key==='days' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            <TableHead onClick={() => toggleSort('days')} className="cursor-pointer select-none text-xs md:text-sm whitespace-nowrap">
+                              Dias {sort.key==='days' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
                             </TableHead>
-                            <TableHead onClick={() => toggleSort('phone')} className="cursor-pointer select-none">
+                            <TableHead onClick={() => toggleSort('phone')} className="cursor-pointer select-none text-xs md:text-sm whitespace-nowrap">
                               WhatsApp {sort.key==='phone' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
                             </TableHead>
                           </TableRow>
@@ -286,16 +303,16 @@ export default function Ranking() {
                         <TableBody>
                           {(sortedClients || clientsData)?.map((client) => (
                             <TableRow key={client.nome}>
-                              <TableCell className="font-medium">{client.nome}</TableCell>
-                              <TableCell className="text-success">
+                              <TableCell className="font-medium text-xs md:text-sm">{client.nome}</TableCell>
+                              <TableCell className="text-success text-xs md:text-sm whitespace-nowrap">
                                 R$ {client.total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                               </TableCell>
-                              <TableCell>
+                              <TableCell className="text-xs md:text-sm hidden md:table-cell">
                                 {client.lastPurchase.toLocaleDateString("pt-BR")}
                               </TableCell>
-                              <TableCell>
+                              <TableCell className="text-xs md:text-sm">
                                 <span className={client.daysSinceLastPurchase > 90 ? "text-destructive font-semibold" : ""}>
-                                  {client.daysSinceLastPurchase} dias
+                                  {client.daysSinceLastPurchase}
                                 </span>
                               </TableCell>
                               <TableCell>
@@ -304,9 +321,9 @@ export default function Ranking() {
                                   variant="outline"
                                   onClick={() => handleWhatsAppClick(client.nome, client.phone, client.daysSinceLastPurchase, saleswoman.nome)}
                                   disabled={!client.phone}
-                                  className="hover:bg-success/10 hover:text-success hover:border-success"
+                                  className="hover:bg-success/10 hover:text-success hover:border-success p-1 md:p-2"
                                 >
-                                  <MessageCircle className="w-4 h-4" />
+                                  <MessageCircle className="w-3 h-3 md:w-4 md:h-4" />
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -315,7 +332,7 @@ export default function Ranking() {
                       </Table>
                     </div>
                   ) : (
-                    <div className="text-center py-4 text-muted-foreground">
+                    <div className="text-center py-4 text-muted-foreground text-sm">
                       Carregando clientes...
                     </div>
                   )}
