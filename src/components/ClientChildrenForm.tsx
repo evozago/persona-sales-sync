@@ -146,7 +146,6 @@ export function ClientChildrenForm({ clientId }: ClientChildrenFormProps) {
               <Input
                 value={child.nome || ""}
                 onChange={(e) => updateChild(index, "nome", e.target.value)}
-                required
               />
             </div>
             <div>
