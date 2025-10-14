@@ -25,7 +25,7 @@ export default function Imports() {
     setStatus('uploading');
     setResult(null);
 
-    const CHUNK_SIZE = type === 'clients' ? 300 : 200;
+    const CHUNK_SIZE = type === 'clients' ? 100 : 200;
 
     const convertExcelDate = (value: any) => {
       if (!value) return null;
@@ -39,6 +39,15 @@ export default function Imports() {
         return isNaN(d.getTime()) ? null : d;
       }
       return null;
+    };
+
+    const normalizeGenero = (val: any): 'Masculino' | 'Feminino' | 'Outro' | null => {
+      if (!val) return null;
+      const s = val.toString().trim().toLowerCase();
+      if (['m', 'masculino', 'male', 'homem'].includes(s)) return 'Masculino';
+      if (['f', 'feminino', 'female', 'mulher'].includes(s)) return 'Feminino';
+      if (['outro', 'other', 'nao informado', 'não informado', 'n/i'].includes(s)) return 'Outro';
+      return null; // evita quebrar por enum inválido
     };
 
     try {
@@ -56,18 +65,24 @@ export default function Imports() {
         for (const row of jsonData) {
           try {
             const nome = row.nome?.toString().trim();
-            if (!nome || row.roles !== 'CLIENT') continue;
+            const roleRaw = row.roles ?? row.role ?? row.tipo ?? null;
+            let isClient = true;
+            if (roleRaw) {
+              const r = roleRaw.toString().toLowerCase();
+              isClient = r.includes('client'); // aceita "client" e "cliente"
+            }
+            if (!nome || !isClient) continue;
 
             const dateVal = convertExcelDate(row.data_nascimento);
             const isoDate = dateVal ? new Date(dateVal).toISOString().split('T')[0] : null;
+            const generoNorm = normalizeGenero(row.genero ?? row.sexo ?? row.gender);
 
-            records.push({
+            const client: any = {
               third_id: row.third_id?.toString() || null,
               nome,
               cpf: row.cpf?.toString() || null,
               rg: row.rg?.toString() || null,
               data_nascimento: isoDate,
-              genero: row.genero || null,
               telefone_1: row.telefone_1?.toString() || null,
               telefone_2: row.telefone_2?.toString() || null,
               telefone_3: row.telefone_3?.toString() || null,
@@ -80,7 +95,10 @@ export default function Imports() {
               endereco_cidade: row.endereco_1_cidade?.toString() || null,
               endereco_uf: row.endereco_1_uf?.toString() || null,
               observacao: row.observacao?.toString() || null,
-            });
+            };
+            if (generoNorm) client.genero = generoNorm; // só envia se válido
+
+            records.push(client);
           } catch (e) {
             errors++;
           }
