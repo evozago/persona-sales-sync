@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Upload, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import * as XLSX from "xlsx";
 
 type ImportStatus = 'idle' | 'uploading' | 'success' | 'error';
 
@@ -20,28 +21,126 @@ export default function Imports() {
   ) => {
     const setStatus = type === 'clients' ? setClientsStatus : setSalesStatus;
     const setResult = type === 'clients' ? setClientsResult : setSalesResult;
-    const functionName = type === 'clients' ? 'import-clients' : 'import-sales';
 
     setStatus('uploading');
     setResult(null);
 
+    const CHUNK_SIZE = type === 'clients' ? 300 : 200;
+
+    const convertExcelDate = (value: any) => {
+      if (!value) return null;
+      if (value instanceof Date) return value;
+      if (typeof value === 'number') {
+        const excelEpoch = new Date(1899, 11, 30);
+        return new Date(excelEpoch.getTime() + value * 86400000);
+      }
+      if (typeof value === 'string') {
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    };
+
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData: any[] = XLSX.utils.sheet_to_json(firstSheet);
 
-      const { data, error } = await supabase.functions.invoke(functionName, {
-        body: formData,
-      });
+      let imported = 0;
+      let errors = 0;
 
-      if (error) throw error;
+      if (type === 'clients') {
+        const records: any[] = [];
+        for (const row of jsonData) {
+          try {
+            const nome = row.nome?.toString().trim();
+            if (!nome || row.roles !== 'CLIENT') continue;
 
-      setStatus('success');
-      setResult(data);
+            const dateVal = convertExcelDate(row.data_nascimento);
+            const isoDate = dateVal ? new Date(dateVal).toISOString().split('T')[0] : null;
 
-      toast({
-        title: "Importação concluída!",
-        description: `${data.imported} registros importados com sucesso${data.errors > 0 ? `, ${data.errors} erros` : ''}`,
-      });
+            records.push({
+              third_id: row.third_id?.toString() || null,
+              nome,
+              cpf: row.cpf?.toString() || null,
+              rg: row.rg?.toString() || null,
+              data_nascimento: isoDate,
+              genero: row.genero || null,
+              telefone_1: row.telefone_1?.toString() || null,
+              telefone_2: row.telefone_2?.toString() || null,
+              telefone_3: row.telefone_3?.toString() || null,
+              email: row.email?.toString() || null,
+              endereco_cep: row.endereco_1_cep?.toString() || null,
+              endereco_logradouro: row.endereco_1_logradouro?.toString() || null,
+              endereco_numero: row.endereco_1_numero?.toString() || null,
+              endereco_complemento: row.endereco_1_complemento?.toString() || null,
+              endereco_bairro: row.endereco_1_bairro?.toString() || null,
+              endereco_cidade: row.endereco_1_cidade?.toString() || null,
+              endereco_uf: row.endereco_1_uf?.toString() || null,
+              observacao: row.observacao?.toString() || null,
+            });
+          } catch (e) {
+            errors++;
+          }
+        }
+
+        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+          const chunk = records.slice(i, i + CHUNK_SIZE);
+          const { error } = await supabase.from('clients').insert(chunk);
+          if (error) {
+            console.error('Insert chunk error (clients):', error);
+            errors += chunk.length;
+          } else {
+            imported += chunk.length;
+          }
+        }
+
+        setStatus('success');
+        setResult({ imported, errors, total: jsonData.length });
+        toast({
+          title: "Importação concluída!",
+          description: `${imported} registros importados com sucesso${errors > 0 ? `, ${errors} erros` : ''}`,
+        });
+      } else {
+        const records: any[] = [];
+        for (const row of jsonData) {
+          try {
+            const clienteNome = row.cliente?.toString().trim();
+            if (!clienteNome) continue;
+            const dataVenda = convertExcelDate(row.ultima_compra) || new Date();
+            records.push({
+              cliente_nome: clienteNome,
+              data_venda: dataVenda,
+              vendedora: row.ultimo_vendedor?.toString() || 'Não informado',
+              quantidade_itens: parseInt(row.itens) || 0,
+              valor_total: parseFloat(row.val_compras) || 0,
+              ticket_medio: parseFloat(row.ticket_medio) || 0,
+            });
+          } catch (e) {
+            errors++;
+          }
+        }
+
+        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+          const chunk = records.slice(i, i + CHUNK_SIZE);
+          const { error } = await supabase.from('sales').insert(chunk);
+          if (error) {
+            console.error('Insert chunk error (sales):', error);
+            errors += chunk.length;
+          } else {
+            imported += chunk.length;
+          }
+        }
+
+        setStatus('success');
+        setResult({ imported, errors, total: jsonData.length });
+        toast({
+          title: "Importação concluída!",
+          description: `${imported} vendas importadas${errors > 0 ? `, ${errors} erros` : ''}`,
+        });
+      }
     } catch (error: any) {
       console.error('Import error:', error);
       setStatus('error');
@@ -52,6 +151,7 @@ export default function Imports() {
       });
     }
   };
+
 
   const ImportCard = ({
     title,
