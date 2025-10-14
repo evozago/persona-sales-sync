@@ -11,6 +11,7 @@ import { toast } from "sonner";
 export default function Ranking() {
   const [expandedSaleswoman, setExpandedSaleswoman] = useState<string | null>(null);
   const [messageTemplates, setMessageTemplates] = useState<Record<string, string>>({});
+  const [sort, setSort] = useState<{ key: 'nome' | 'total' | 'lastPurchase' | 'days' | 'phone'; dir: 'asc' | 'desc' }>({ key: 'total', dir: 'desc' });
 
   const { data: saleswomenStats, isLoading } = useQuery({
     queryKey: ["saleswomen-ranking"],
@@ -78,7 +79,7 @@ export default function Ranking() {
 
       const clientIds = Array.from(clientsMap.values())
         .map(c => c.clientId)
-        .filter(Boolean);
+        .filter(Boolean) as string[];
 
       if (clientIds.length > 0) {
         const { data: clientsInfo } = await supabase
@@ -89,7 +90,7 @@ export default function Ranking() {
         clientsInfo?.forEach(client => {
           const entry = Array.from(clientsMap.entries()).find(([_, v]) => v.clientId === client.id);
           if (entry) {
-            entry[1].phone = client.telefone_1;
+            entry[1].phone = client.telefone_1 as string | null;
           }
         });
       }
@@ -107,9 +108,55 @@ export default function Ranking() {
     enabled: !!expandedSaleswoman,
   });
 
+  const sortedClients = clientsData
+    ? [...clientsData].sort((a, b) => {
+        let va: any;
+        let vb: any;
+        switch (sort.key) {
+          case 'nome':
+            va = a.nome?.toLowerCase() || '';
+            vb = b.nome?.toLowerCase() || '';
+            break;
+          case 'total':
+            va = a.total || 0;
+            vb = b.total || 0;
+            break;
+          case 'lastPurchase':
+            va = a.lastPurchase ? new Date(a.lastPurchase).getTime() : 0;
+            vb = b.lastPurchase ? new Date(b.lastPurchase).getTime() : 0;
+            break;
+          case 'days':
+            va = a.daysSinceLastPurchase || 0;
+            vb = b.daysSinceLastPurchase || 0;
+            break;
+          case 'phone':
+            va = a.phone ? 1 : 0;
+            vb = b.phone ? 1 : 0;
+            break;
+          default:
+            va = 0; vb = 0;
+        }
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return sort.dir === 'asc' ? cmp : -cmp;
+      })
+    : null;
+
+  const toggleSort = (key: 'nome' | 'total' | 'lastPurchase' | 'days' | 'phone') => {
+    setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+  };
+
   const getMessageTemplate = (saleswomanName: string) => {
     return messageTemplates[saleswomanName] || 
       `Olá {NOME}! 😊\n\nTudo bem? Notei que faz {DIAS} dias que você não faz uma comprinha conosco e estou com saudades!\n\nTenho algumas novidades incríveis que sei que você vai adorar. Que tal darmos uma olhadinha?\n\nEstou aqui para te ajudar! 💖`;
+  };
+
+  const normalizeBRPhone = (raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    let n = digits.replace(/^0+/, '');
+    if (n.startsWith('55') && n.length >= 12) return n;
+    if (n.length === 13 && n.startsWith('55')) return n;
+    if (n.length >= 10 && n.length <= 11) return '55' + n;
+    return n.length >= 12 ? n : null;
   };
 
   const handleWhatsAppClick = (clientName: string, phone: string | null, daysSince: number, saleswomanName: string) => {
@@ -118,16 +165,20 @@ export default function Ranking() {
       return;
     }
 
-    const cleanPhone = phone.replace(/\D/g, "");
+    const normalized = normalizeBRPhone(phone);
+    if (!normalized) {
+      toast.error("Telefone inválido para WhatsApp");
+      return;
+    }
+
     const template = getMessageTemplate(saleswomanName);
     const message = template
       .replace("{NOME}", clientName)
       .replace("{DIAS}", daysSince.toString());
     
-    const url = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
+    const url = `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
     window.open(url, "_blank");
   };
-
   const getRankColor = (index: number) => {
     if (index === 0) return "from-yellow-400 to-yellow-600";
     if (index === 1) return "from-gray-300 to-gray-500";
@@ -217,15 +268,25 @@ export default function Ranking() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead>Total Comprado</TableHead>
-                            <TableHead>Última Compra</TableHead>
-                            <TableHead>Dias sem Comprar</TableHead>
-                            <TableHead>WhatsApp</TableHead>
+                            <TableHead onClick={() => toggleSort('nome')} className="cursor-pointer select-none">
+                              Cliente {sort.key==='nome' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            </TableHead>
+                            <TableHead onClick={() => toggleSort('total')} className="cursor-pointer select-none">
+                              Total Comprado {sort.key==='total' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            </TableHead>
+                            <TableHead onClick={() => toggleSort('lastPurchase')} className="cursor-pointer select-none">
+                              Última Compra {sort.key==='lastPurchase' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            </TableHead>
+                            <TableHead onClick={() => toggleSort('days')} className="cursor-pointer select-none">
+                              Dias sem Comprar {sort.key==='days' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            </TableHead>
+                            <TableHead onClick={() => toggleSort('phone')} className="cursor-pointer select-none">
+                              WhatsApp {sort.key==='phone' && (sort.dir==='asc' ? <ChevronUp className="inline w-3 h-3 ml-1" /> : <ChevronDown className="inline w-3 h-3 ml-1" />)}
+                            </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {clientsData.map((client) => (
+                          {(sortedClients || clientsData)?.map((client) => (
                             <TableRow key={client.nome}>
                               <TableCell className="font-medium">{client.nome}</TableCell>
                               <TableCell className="text-success">
