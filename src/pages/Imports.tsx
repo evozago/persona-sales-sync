@@ -40,13 +40,19 @@ export default function Imports() {
     };
 
     const processArrayField = (field: string | null | undefined): string[] => {
-      if (!field || field === '[]') return [];
-      // Remove colchetes, aspas simples e separa por vírgula
-      return field
-        .replace(/[\[\]']/g, '')
+      if (!field || field === '[]' || field === 'nan') return [];
+      
+      // Converter para string e remover colchetes e aspas
+      const cleanField = String(field)
+        .replace(/[\[\]]/g, '')  // Remove colchetes
+        .replace(/'/g, '')        // Remove aspas simples
+        .replace(/"/g, '');       // Remove aspas duplas
+      
+      // Separar por vírgula e limpar
+      return cleanField
         .split(',')
         .map(item => item.trim())
-        .filter(item => item.length > 0);
+        .filter(item => item.length > 0 && item !== 'nan');
     };
 
     try {
@@ -60,6 +66,14 @@ export default function Imports() {
       let errors = 0;
 
       if (type === 'clients') {
+        // Limpar dados antes de importar
+        await supabase.from('sales').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('client_brand_preferences').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('client_children').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('clients').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('sizes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
         // Nova estrutura: importar clientes com marcas e tamanhos
         for (const row of jsonData) {
           try {
