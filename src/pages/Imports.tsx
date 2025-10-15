@@ -25,8 +25,6 @@ export default function Imports() {
     setStatus('uploading');
     setResult(null);
 
-    const CHUNK_SIZE = type === 'clients' ? 100 : 200;
-
     const convertExcelDate = (value: any) => {
       if (!value) return null;
       if (value instanceof Date) return value;
@@ -41,13 +39,14 @@ export default function Imports() {
       return null;
     };
 
-    const normalizeGenero = (val: any): 'Masculino' | 'Feminino' | 'Outro' | null => {
-      if (!val) return null;
-      const s = val.toString().trim().toLowerCase();
-      if (['m', 'masculino', 'male', 'homem'].includes(s)) return 'Masculino';
-      if (['f', 'feminino', 'female', 'mulher'].includes(s)) return 'Feminino';
-      if (['outro', 'other', 'nao informado', 'não informado', 'n/i'].includes(s)) return 'Outro';
-      return null; // evita quebrar por enum inválido
+    const processArrayField = (field: string | null | undefined): string[] => {
+      if (!field || field === '[]') return [];
+      // Remove colchetes, aspas simples e separa por vírgula
+      return field
+        .replace(/[\[\]']/g, '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
     };
 
     try {
@@ -61,57 +60,115 @@ export default function Imports() {
       let errors = 0;
 
       if (type === 'clients') {
-        const records: any[] = [];
+        // Nova estrutura: importar clientes com marcas e tamanhos
         for (const row of jsonData) {
           try {
-            const nome = row.nome?.toString().trim();
-            const roleRaw = row.roles ?? row.role ?? row.tipo ?? null;
-            let isClient = true;
-            if (roleRaw) {
-              const r = roleRaw.toString().toLowerCase();
-              isClient = r.includes('client'); // aceita "client" e "cliente"
+            const birthDate = row.data_aniversario_cliente ? convertExcelDate(row.data_aniversario_cliente) : null;
+            const lastPurchaseDate = row.data_ultima_compra ? convertExcelDate(row.data_ultima_compra) : null;
+
+            // Inserir cliente
+            const { data: clientData, error: clientError } = await supabase
+              .from('clients')
+              .insert({
+                nome: row.cliente?.toString() || '',
+                cpf: row.cpf_cliente?.toString() || null,
+                telefone_1: row.telefone_principal?.toString() || null,
+                data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
+                vendedora_responsavel: row.ultimo_vendedor?.toString() || null,
+              })
+              .select()
+              .single();
+
+            if (clientError) {
+              console.error('Client insert error:', clientError);
+              errors++;
+              continue;
             }
-            if (!nome || !isClient) continue;
 
-            const dateVal = convertExcelDate(row.data_nascimento);
-            const isoDate = dateVal ? new Date(dateVal).toISOString().split('T')[0] : null;
-            const generoNorm = normalizeGenero(row.genero ?? row.sexo ?? row.gender);
+            // Processar marcas
+            const marcas = processArrayField(row.marcas_compradas);
+            for (const marca of marcas) {
+              // Inserir ou buscar marca
+              const { data: brandData } = await supabase
+                .from('brands')
+                .select('id')
+                .eq('nome', marca)
+                .maybeSingle();
 
-            const client: any = {
-              third_id: row.third_id?.toString() || null,
-              nome,
-              cpf: row.cpf?.toString() || null,
-              rg: row.rg?.toString() || null,
-              data_nascimento: isoDate,
-              telefone_1: row.telefone_1?.toString() || null,
-              telefone_2: row.telefone_2?.toString() || null,
-              telefone_3: row.telefone_3?.toString() || null,
-              email: row.email?.toString() || null,
-              endereco_cep: row.endereco_1_cep?.toString() || null,
-              endereco_logradouro: row.endereco_1_logradouro?.toString() || null,
-              endereco_numero: row.endereco_1_numero?.toString() || null,
-              endereco_complemento: row.endereco_1_complemento?.toString() || null,
-              endereco_bairro: row.endereco_1_bairro?.toString() || null,
-              endereco_cidade: row.endereco_1_cidade?.toString() || null,
-              endereco_uf: row.endereco_1_uf?.toString() || null,
-              observacao: row.observacao?.toString() || null,
-            };
-            if (generoNorm) client.genero = generoNorm; // só envia se válido
+              let brandId = brandData?.id;
 
-            records.push(client);
-          } catch (e) {
+              if (!brandId) {
+                const { data: newBrand } = await supabase
+                  .from('brands')
+                  .insert({ nome: marca })
+                  .select()
+                  .single();
+                brandId = newBrand?.id;
+              }
+
+              // Vincular marca ao cliente
+              if (brandId) {
+                await supabase
+                  .from('client_brand_preferences')
+                  .insert({
+                    client_id: clientData.id,
+                    brand_id: brandId,
+                  });
+              }
+            }
+
+            // Processar tamanhos de roupas
+            const tamanhosRoupas = processArrayField(row.tamanhos_comprados);
+            for (const tamanho of tamanhosRoupas) {
+              const { data: sizeData } = await supabase
+                .from('sizes')
+                .select('id')
+                .eq('nome', tamanho)
+                .eq('tipo', 'Roupas')
+                .maybeSingle();
+
+              if (!sizeData) {
+                await supabase
+                  .from('sizes')
+                  .insert({ nome: tamanho, tipo: 'Roupas' });
+              }
+            }
+
+            // Processar numerações de calçados
+            const numeracoesCalcados = processArrayField(row.numeracao_comprados);
+            for (const numeracao of numeracoesCalcados) {
+              const { data: sizeData } = await supabase
+                .from('sizes')
+                .select('id')
+                .eq('nome', numeracao)
+                .eq('tipo', 'Calçados')
+                .maybeSingle();
+
+              if (!sizeData) {
+                await supabase
+                  .from('sizes')
+                  .insert({ nome: numeracao, tipo: 'Calçados' });
+              }
+            }
+
+            // Inserir venda resumida
+            if (row.qtde_compras_total && row.total_gasto) {
+              await supabase
+                .from('sales')
+                .insert({
+                  client_id: clientData.id,
+                  cliente_nome: row.cliente?.toString() || '',
+                  data_venda: lastPurchaseDate ? new Date(lastPurchaseDate).toISOString() : new Date().toISOString(),
+                  vendedora: row.ultimo_vendedor?.toString() || '',
+                  quantidade_itens: parseInt(row.qtde_compras_total) || 0,
+                  valor_total: parseFloat(row.total_gasto) || 0,
+                });
+            }
+
+            imported++;
+          } catch (error: any) {
+            console.error('Row processing error:', error);
             errors++;
-          }
-        }
-
-        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
-          const chunk = records.slice(i, i + CHUNK_SIZE);
-          const { error } = await supabase.from('clients').insert(chunk);
-          if (error) {
-            console.error('Insert chunk error (clients):', error);
-            errors += chunk.length;
-          } else {
-            imported += chunk.length;
           }
         }
 
@@ -119,44 +176,15 @@ export default function Imports() {
         setResult({ imported, errors, total: jsonData.length });
         toast({
           title: "Importação concluída!",
-          description: `${imported} registros importados com sucesso${errors > 0 ? `, ${errors} erros` : ''}`,
+          description: `${imported} clientes importados${errors > 0 ? `, ${errors} erros` : ''}`,
         });
       } else {
-        const records: any[] = [];
-        for (const row of jsonData) {
-          try {
-            const clienteNome = row.cliente?.toString().trim();
-            if (!clienteNome) continue;
-            const dataVenda = convertExcelDate(row.ultima_compra) || new Date();
-            records.push({
-              cliente_nome: clienteNome,
-              data_venda: dataVenda,
-              vendedora: row.ultimo_vendedor?.toString() || 'Não informado',
-              quantidade_itens: parseInt(row.itens) || 0,
-              valor_total: parseFloat(row.val_compras) || 0,
-              ticket_medio: parseFloat(row.ticket_medio) || 0,
-            });
-          } catch (e) {
-            errors++;
-          }
-        }
-
-        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
-          const chunk = records.slice(i, i + CHUNK_SIZE);
-          const { error } = await supabase.from('sales').insert(chunk);
-          if (error) {
-            console.error('Insert chunk error (sales):', error);
-            errors += chunk.length;
-          } else {
-            imported += chunk.length;
-          }
-        }
-
+        // Sales import não é mais necessário - dados vêm junto com clientes
         setStatus('success');
-        setResult({ imported, errors, total: jsonData.length });
+        setResult({ imported: 0, errors: 0, total: 0 });
         toast({
-          title: "Importação concluída!",
-          description: `${imported} vendas importadas${errors > 0 ? `, ${errors} erros` : ''}`,
+          title: "Importação de vendas",
+          description: "Use a importação de clientes para importar vendas.",
         });
       }
     } catch (error: any) {
@@ -259,7 +287,7 @@ export default function Imports() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <ImportCard
           title="Importar Clientes"
-          description="Faça upload da planilha de clientes (pessoas)"
+          description="Faça upload da planilha unificada"
           status={clientsStatus}
           result={clientsResult}
           onFileSelect={(file) => handleFileUpload(file, 'clients')}
@@ -268,7 +296,7 @@ export default function Imports() {
 
         <ImportCard
           title="Importar Vendas"
-          description="Faça upload do resumo de clientes/vendas"
+          description="Não disponível - use importação de clientes"
           status={salesStatus}
           result={salesResult}
           onFileSelect={(file) => handleFileUpload(file, 'sales')}
@@ -280,29 +308,30 @@ export default function Imports() {
         <h3 className="text-lg font-semibold mb-4">Instruções de Importação</h3>
         <div className="space-y-3 text-muted-foreground">
           <div>
-            <p className="font-medium text-foreground mb-1">📊 Planilha de Clientes:</p>
+            <p className="font-medium text-foreground mb-1">📊 Formato da Planilha:</p>
             <ul className="space-y-1 ml-4">
-              <li>• Formato aceito: Excel (.xlsx, .xls)</li>
-              <li>• Colunas esperadas: nome, cpf, telefone_1, data_nascimento, endereço, etc.</li>
-              <li>• A importação detectará automaticamente as colunas</li>
+              <li>• Colunas: cliente, cpf_cliente, telefone_principal, data_aniversario_cliente</li>
+              <li>• qtde_compras_total, total_gasto, data_ultima_compra, ultimo_vendedor</li>
+              <li>• marcas_compradas, tamanhos_comprados, numeracao_comprados</li>
             </ul>
           </div>
           
           <div>
-            <p className="font-medium text-foreground mb-1">💰 Planilha de Vendas:</p>
+            <p className="font-medium text-foreground mb-1">🏷️ Formato de Arrays:</p>
             <ul className="space-y-1 ml-4">
-              <li>• Formato aceito: Excel (.xlsx, .xls)</li>
-              <li>• Colunas esperadas: cliente, ultima_compra, ultimo_vendedor, val_compras, etc.</li>
-              <li>• O sistema tentará vincular automaticamente com os clientes cadastrados</li>
+              <li>• Arrays devem estar no formato: ['ITEM1', 'ITEM2']</li>
+              <li>• marcas_compradas → cria/vincula marcas</li>
+              <li>• tamanhos_comprados → cria tamanhos de Roupas</li>
+              <li>• numeracao_comprados → cria tamanhos de Calçados</li>
             </ul>
           </div>
 
           <div className="pt-3 border-t border-border">
             <p className="font-medium text-foreground mb-1">⚠️ Observações:</p>
             <ul className="space-y-1 ml-4">
-              <li>• Registros duplicados serão atualizados quando possível</li>
-              <li>• Linhas com dados inválidos serão ignoradas</li>
-              <li>• Um resumo será exibido após cada importação</li>
+              <li>• Cada cliente será importado com marcas, tamanhos e resumo de vendas</li>
+              <li>• Dados faltantes podem ser completados manualmente depois</li>
+              <li>• Marcas e tamanhos serão criados automaticamente se não existirem</li>
             </ul>
           </div>
         </div>
