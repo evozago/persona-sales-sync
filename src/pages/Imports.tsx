@@ -63,6 +63,12 @@ export default function Imports() {
         // Nova estrutura: importar clientes com marcas e tamanhos
         for (const row of jsonData) {
           try {
+            // Pular linhas sem nome de cliente
+            if (!row.cliente) {
+              errors++;
+              continue;
+            }
+
             const birthDate = row.data_aniversario_cliente ? convertExcelDate(row.data_aniversario_cliente) : null;
             const lastPurchaseDate = row.data_ultima_compra ? convertExcelDate(row.data_ultima_compra) : null;
 
@@ -70,17 +76,23 @@ export default function Imports() {
             const { data: clientData, error: clientError } = await supabase
               .from('clients')
               .insert({
-                nome: row.cliente?.toString() || '',
-                cpf: row.cpf_cliente?.toString() || null,
-                telefone_1: row.telefone_principal?.toString() || null,
+                nome: row.cliente?.toString().trim() || '',
+                cpf: row.cpf_cliente?.toString().trim() || null,
+                telefone_1: row.telefone_principal?.toString().trim() || null,
                 data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
-                vendedora_responsavel: row.ultimo_vendedor?.toString() || null,
+                vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || null,
               })
               .select()
               .single();
 
             if (clientError) {
-              console.error('Client insert error:', clientError);
+              console.error('Client insert error:', clientError, row);
+              errors++;
+              continue;
+            }
+
+            if (!clientData) {
+              console.error('No client data returned:', row);
               errors++;
               continue;
             }
@@ -151,18 +163,23 @@ export default function Imports() {
               }
             }
 
-            // Inserir venda resumida
-            if (row.qtde_compras_total && row.total_gasto) {
-              await supabase
-                .from('sales')
-                .insert({
-                  client_id: clientData.id,
-                  cliente_nome: row.cliente?.toString() || '',
-                  data_venda: lastPurchaseDate ? new Date(lastPurchaseDate).toISOString() : new Date().toISOString(),
-                  vendedora: row.ultimo_vendedor?.toString() || '',
-                  quantidade_itens: parseInt(row.qtde_compras_total) || 0,
-                  valor_total: parseFloat(row.total_gasto) || 0,
-                });
+            // Inserir venda resumida (só se tiver valores válidos)
+            if (row.qtde_compras_total && row.total_gasto && lastPurchaseDate) {
+              const valorTotal = parseFloat(row.total_gasto.toString().replace(',', '.')) || 0;
+              const quantidadeItens = parseInt(row.qtde_compras_total.toString()) || 0;
+              
+              if (valorTotal > 0 && quantidadeItens > 0) {
+                await supabase
+                  .from('sales')
+                  .insert({
+                    client_id: clientData.id,
+                    cliente_nome: row.cliente?.toString().trim() || '',
+                    data_venda: new Date(lastPurchaseDate).toISOString(),
+                    vendedora: row.ultimo_vendedor?.toString().trim() || '',
+                    quantidade_itens: quantidadeItens,
+                    valor_total: valorTotal,
+                  });
+              }
             }
 
             imported++;
