@@ -163,24 +163,65 @@ export default function Imports() {
 
             const birthDate = row.data_aniversario_cliente ? convertExcelDate(row.data_aniversario_cliente) : null;
             const lastPurchaseDate = row.data_ultima_compra ? convertExcelDate(row.data_ultima_compra) : null;
+            const cpf = row.cpf_cliente?.toString().trim() || null;
+            const nome = row.cliente?.toString().trim() || '';
 
-            // Inserir cliente
-            const { data: clientData, error: clientError } = await supabase
-              .from('clients')
-              .insert({
-                nome: row.cliente?.toString().trim() || '',
-                cpf: row.cpf_cliente?.toString().trim() || null,
-                telefone_1: row.telefone_principal?.toString().trim() || null,
-                data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
-                vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || null,
-              })
-              .select()
-              .single();
+            // Verificar se cliente já existe (por CPF ou nome)
+            let existingClient = null;
+            if (cpf) {
+              const { data } = await supabase
+                .from('clients')
+                .select('*')
+                .eq('cpf', cpf)
+                .maybeSingle();
+              existingClient = data;
+            }
+            
+            // Se não encontrou por CPF, buscar por nome
+            if (!existingClient && nome) {
+              const { data } = await supabase
+                .from('clients')
+                .select('*')
+                .eq('nome', nome)
+                .maybeSingle();
+              existingClient = data;
+            }
 
-            if (clientError) {
-              console.error(`Erro ao inserir cliente linha ${i + 1}:`, clientError.message);
-              errors++;
-              continue;
+            let clientData;
+            
+            if (existingClient) {
+              // Cliente existe - atualizar apenas vendedora responsável
+              const { data: updatedClient } = await supabase
+                .from('clients')
+                .update({
+                  vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || existingClient.vendedora_responsavel,
+                })
+                .eq('id', existingClient.id)
+                .select()
+                .single();
+              
+              clientData = updatedClient || existingClient;
+            } else {
+              // Cliente novo - inserir todos os dados
+              const { data: newClient, error: clientError } = await supabase
+                .from('clients')
+                .insert({
+                  nome,
+                  cpf,
+                  telefone_1: row.telefone_principal?.toString().trim() || null,
+                  data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
+                  vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || null,
+                })
+                .select()
+                .single();
+
+              if (clientError) {
+                console.error(`Erro ao inserir cliente linha ${i + 1}:`, clientError.message);
+                errors++;
+                continue;
+              }
+
+              clientData = newClient;
             }
 
             if (!clientData) {
@@ -189,9 +230,23 @@ export default function Imports() {
               continue;
             }
 
-            // Processar marcas (agora só precisamos vincular)
+            // Processar marcas - adicionar apenas as que não existem
             const marcas = processArrayField(row.marcas_compradas);
+            
+            // Buscar marcas já vinculadas ao cliente
+            const { data: existingPrefs } = await supabase
+              .from('client_brand_preferences')
+              .select('brand_id, brands(nome)')
+              .eq('client_id', clientData.id);
+            
+            const existingBrandNames = new Set(
+              existingPrefs?.map((p: any) => p.brands?.nome).filter(Boolean) || []
+            );
+            
             for (const marca of marcas) {
+              // Pular se marca já está vinculada
+              if (existingBrandNames.has(marca)) continue;
+              
               try {
                 const { data: brandData } = await supabase
                   .from('brands')
@@ -213,7 +268,7 @@ export default function Imports() {
               }
             }
 
-            // Inserir venda resumida (só se tiver valores válidos)
+            // Processar vendas - somar aos valores existentes
             if (row.qtde_compras_total && row.total_gasto && lastPurchaseDate) {
               try {
                 const valorTotalStr = String(row.total_gasto).replace(',', '.');
@@ -221,15 +276,27 @@ export default function Imports() {
                 const quantidadeItens = parseInt(String(row.qtde_compras_total)) || 0;
                 
                 if (valorTotal > 0 && quantidadeItens > 0) {
+                  // Buscar vendas existentes do cliente
+                  const { data: existingSales } = await supabase
+                    .from('sales')
+                    .select('quantidade_itens, valor_total')
+                    .eq('client_id', clientData.id);
+                  
+                  // Calcular totais existentes
+                  const existingQty = existingSales?.reduce((sum, s) => sum + (s.quantidade_itens || 0), 0) || 0;
+                  const existingValue = existingSales?.reduce((sum, s) => sum + (Number(s.valor_total) || 0), 0) || 0;
+                  
+                  // Criar nova venda com os novos valores
                   await supabase
                     .from('sales')
                     .insert({
                       client_id: clientData.id,
-                      cliente_nome: row.cliente?.toString().trim() || '',
+                      cliente_nome: nome,
                       data_venda: new Date(lastPurchaseDate).toISOString(),
                       vendedora: row.ultimo_vendedor?.toString().trim() || '',
                       quantidade_itens: quantidadeItens,
                       valor_total: valorTotal,
+                      ticket_medio: valorTotal / quantidadeItens,
                     });
                 }
               } catch (error: any) {
