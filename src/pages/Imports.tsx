@@ -14,6 +14,7 @@ export default function Imports() {
   const [clientsResult, setClientsResult] = useState<any>(null);
   const [salesResult, setSalesResult] = useState<any>(null);
   const [isClearing, setIsClearing] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const { toast } = useToast();
 
   const handleClearData = async () => {
@@ -93,11 +94,69 @@ export default function Imports() {
       let errors = 0;
 
       if (type === 'clients') {
-        // Nova estrutura: importar clientes com marcas e tamanhos
+        setImportProgress({ current: 0, total: jsonData.length });
+        
+        // Coletar todas as marcas e tamanhos únicos para inserção em lote
+        const allBrands = new Set<string>();
+        const allSizesRoupas = new Set<string>();
+        const allSizesCalcados = new Set<string>();
+        
         for (const row of jsonData) {
+          const marcas = processArrayField(row.marcas_compradas);
+          const tamanhosRoupas = processArrayField(row.tamanhos_comprados);
+          const numeracoesCalcados = processArrayField(row.numeracao_comprados);
+          
+          marcas.forEach(m => allBrands.add(m));
+          tamanhosRoupas.forEach(t => allSizesRoupas.add(t));
+          numeracoesCalcados.forEach(n => allSizesCalcados.add(n));
+        }
+        
+        // Inserir todas as marcas de uma vez
+        if (allBrands.size > 0) {
+          const brandsToInsert = Array.from(allBrands).map(nome => ({ nome }));
+          await supabase
+            .from('brands')
+            .upsert(brandsToInsert, { onConflict: 'nome', ignoreDuplicates: true });
+        }
+        
+        // Inserir todos os tamanhos de roupas de uma vez
+        if (allSizesRoupas.size > 0) {
+          const sizesToInsert = Array.from(allSizesRoupas).map(nome => ({ nome, tipo: 'Roupas' }));
+          for (const size of sizesToInsert) {
+            try {
+              await supabase
+                .from('sizes')
+                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
+            } catch (error) {
+              console.warn(`Erro ao inserir tamanho ${size.nome}:`, error);
+            }
+          }
+        }
+        
+        // Inserir todos os tamanhos de calçados de uma vez
+        if (allSizesCalcados.size > 0) {
+          const sizesToInsert = Array.from(allSizesCalcados).map(nome => ({ nome, tipo: 'Calçados' }));
+          for (const size of sizesToInsert) {
+            try {
+              await supabase
+                .from('sizes')
+                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
+            } catch (error) {
+              console.warn(`Erro ao inserir numeração ${size.nome}:`, error);
+            }
+          }
+        }
+
+        // Processar cada cliente
+        for (let i = 0; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          
           try {
+            // Atualizar progresso
+            setImportProgress({ current: i + 1, total: jsonData.length });
+            
             // Pular linhas sem nome de cliente
-            if (!row.cliente) {
+            if (!row.cliente || String(row.cliente).trim() === '') {
               errors++;
               continue;
             }
@@ -119,114 +178,78 @@ export default function Imports() {
               .single();
 
             if (clientError) {
-              console.error('Client insert error:', clientError, row);
+              console.error(`Erro ao inserir cliente linha ${i + 1}:`, clientError.message);
               errors++;
               continue;
             }
 
             if (!clientData) {
-              console.error('No client data returned:', row);
+              console.error(`Sem dados de cliente retornados - linha ${i + 1}`);
               errors++;
               continue;
             }
 
-            // Processar marcas
+            // Processar marcas (agora só precisamos vincular)
             const marcas = processArrayField(row.marcas_compradas);
             for (const marca of marcas) {
-              // Inserir ou buscar marca
-              const { data: brandData } = await supabase
-                .from('brands')
-                .select('id')
-                .eq('nome', marca)
-                .maybeSingle();
-
-              let brandId = brandData?.id;
-
-              if (!brandId) {
-                const { data: newBrand } = await supabase
+              try {
+                const { data: brandData } = await supabase
                   .from('brands')
-                  .insert({ nome: marca })
-                  .select()
-                  .single();
-                brandId = newBrand?.id;
-              }
+                  .select('id')
+                  .eq('nome', marca)
+                  .maybeSingle();
 
-              // Vincular marca ao cliente
-              if (brandId) {
-                await supabase
-                  .from('client_brand_preferences')
-                  .insert({
-                    client_id: clientData.id,
-                    brand_id: brandId,
-                  });
-              }
-            }
-
-            // Processar tamanhos de roupas
-            const tamanhosRoupas = processArrayField(row.tamanhos_comprados);
-            for (const tamanho of tamanhosRoupas) {
-              const { data: sizeData } = await supabase
-                .from('sizes')
-                .select('id')
-                .eq('nome', tamanho)
-                .eq('tipo', 'Roupas')
-                .maybeSingle();
-
-              if (!sizeData) {
-                await supabase
-                  .from('sizes')
-                  .insert({ nome: tamanho, tipo: 'Roupas' });
-              }
-            }
-
-            // Processar numerações de calçados
-            const numeracoesCalcados = processArrayField(row.numeracao_comprados);
-            for (const numeracao of numeracoesCalcados) {
-              const { data: sizeData } = await supabase
-                .from('sizes')
-                .select('id')
-                .eq('nome', numeracao)
-                .eq('tipo', 'Calçados')
-                .maybeSingle();
-
-              if (!sizeData) {
-                await supabase
-                  .from('sizes')
-                  .insert({ nome: numeracao, tipo: 'Calçados' });
+                if (brandData?.id) {
+                  await supabase
+                    .from('client_brand_preferences')
+                    .insert({
+                      client_id: clientData.id,
+                      brand_id: brandData.id,
+                    })
+                    .select();
+                }
+              } catch (error: any) {
+                console.warn(`Erro ao vincular marca ${marca}:`, error.message);
               }
             }
 
             // Inserir venda resumida (só se tiver valores válidos)
             if (row.qtde_compras_total && row.total_gasto && lastPurchaseDate) {
-              const valorTotal = parseFloat(row.total_gasto.toString().replace(',', '.')) || 0;
-              const quantidadeItens = parseInt(row.qtde_compras_total.toString()) || 0;
-              
-              if (valorTotal > 0 && quantidadeItens > 0) {
-                await supabase
-                  .from('sales')
-                  .insert({
-                    client_id: clientData.id,
-                    cliente_nome: row.cliente?.toString().trim() || '',
-                    data_venda: new Date(lastPurchaseDate).toISOString(),
-                    vendedora: row.ultimo_vendedor?.toString().trim() || '',
-                    quantidade_itens: quantidadeItens,
-                    valor_total: valorTotal,
-                  });
+              try {
+                const valorTotalStr = String(row.total_gasto).replace(',', '.');
+                const valorTotal = parseFloat(valorTotalStr) || 0;
+                const quantidadeItens = parseInt(String(row.qtde_compras_total)) || 0;
+                
+                if (valorTotal > 0 && quantidadeItens > 0) {
+                  await supabase
+                    .from('sales')
+                    .insert({
+                      client_id: clientData.id,
+                      cliente_nome: row.cliente?.toString().trim() || '',
+                      data_venda: new Date(lastPurchaseDate).toISOString(),
+                      vendedora: row.ultimo_vendedor?.toString().trim() || '',
+                      quantidade_itens: quantidadeItens,
+                      valor_total: valorTotal,
+                    });
+                }
+              } catch (error: any) {
+                console.warn(`Erro ao inserir venda para cliente ${row.cliente}:`, error.message);
               }
             }
 
             imported++;
           } catch (error: any) {
-            console.error('Row processing error:', error);
+            console.error(`Erro ao processar linha ${i + 1}:`, error.message);
             errors++;
           }
         }
 
+        setImportProgress({ current: 0, total: 0 });
         setStatus('success');
         setResult({ imported, errors, total: jsonData.length });
         toast({
           title: "Importação concluída!",
-          description: `${imported} clientes importados${errors > 0 ? `, ${errors} erros` : ''}`,
+          description: `${imported} clientes importados de ${jsonData.length} linhas${errors > 0 ? `. ${errors} erros encontrados` : ''}`,
         });
       } else {
         // Sales import não é mais necessário - dados vêm junto com clientes
@@ -281,6 +304,20 @@ export default function Imports() {
         <h3 className="text-xl font-semibold mb-2">{title}</h3>
         <p className="text-muted-foreground text-sm mb-4">{description}</p>
       </div>
+
+      {status === 'uploading' && importProgress.total > 0 && (
+        <div className="p-4 bg-muted rounded-lg text-sm space-y-2">
+          <p className="text-muted-foreground">
+            Processando: {importProgress.current} de {importProgress.total}
+          </p>
+          <div className="w-full bg-background rounded-full h-2">
+            <div 
+              className="bg-primary h-2 rounded-full transition-all duration-300"
+              style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {result && (
         <div className="p-4 bg-muted rounded-lg text-sm space-y-1">
