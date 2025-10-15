@@ -13,7 +13,34 @@ export default function Imports() {
   const [salesStatus, setSalesStatus] = useState<ImportStatus>('idle');
   const [clientsResult, setClientsResult] = useState<any>(null);
   const [salesResult, setSalesResult] = useState<any>(null);
+  const [isClearing, setIsClearing] = useState(false);
   const { toast } = useToast();
+
+  const handleClearData = async () => {
+    setIsClearing(true);
+    try {
+      await supabase.from('sales').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('client_brand_preferences').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('client_children').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('clients').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('sizes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      toast({
+        title: "Dados limpos!",
+        description: "Todos os dados foram removidos com sucesso.",
+      });
+    } catch (error: any) {
+      console.error('Clear data error:', error);
+      toast({
+        title: "Erro ao limpar dados",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsClearing(false);
+    }
+  };
 
   const handleFileUpload = async (
     file: File,
@@ -66,14 +93,6 @@ export default function Imports() {
       let errors = 0;
 
       if (type === 'clients') {
-        // Limpar dados antes de importar
-        await supabase.from('sales').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('client_brand_preferences').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('client_children').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('clients').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('sizes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-
         // Nova estrutura: importar clientes com marcas e tamanhos
         for (const row of jsonData) {
           try {
@@ -308,11 +327,27 @@ export default function Imports() {
 
   return (
     <div className="p-8 space-y-6">
-      <div>
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-          Importações
-        </h1>
-        <p className="text-muted-foreground mt-2">Importe dados de planilhas Excel</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            Importações
+          </h1>
+          <p className="text-muted-foreground mt-2">Importe dados de planilhas Excel</p>
+        </div>
+        <Button 
+          onClick={handleClearData} 
+          disabled={isClearing}
+          variant="destructive"
+        >
+          {isClearing ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Limpando...
+            </>
+          ) : (
+            'Limpar Todos os Dados'
+          )}
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
