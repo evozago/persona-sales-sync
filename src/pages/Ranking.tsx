@@ -22,24 +22,50 @@ export default function Ranking() {
 
       if (!sales) return [];
 
-      const statsMap = new Map<string, { total: number; count: number; clients: Set<string> }>();
+      const statsMap = new Map<
+        string,
+        {
+          total: number;
+          count: number;
+          clients: Map<string, { total: number; count: number }>;
+        }
+      >();
 
       sales.forEach((sale) => {
-        const current = statsMap.get(sale.vendedora) || { total: 0, count: 0, clients: new Set() };
-        current.total += Number(sale.valor_total);
-        current.count += 1;
-        current.clients.add(sale.cliente_nome);
-        statsMap.set(sale.vendedora, current);
+        const valor = Number(sale.valor_total);
+        const stats =
+          statsMap.get(sale.vendedora) ||
+          {
+            total: 0,
+            count: 0,
+            clients: new Map<string, { total: number; count: number }>(),
+          };
+
+        stats.total += valor;
+        stats.count += 1;
+
+        const clientStats = stats.clients.get(sale.cliente_nome) || { total: 0, count: 0 };
+        clientStats.total += valor;
+        clientStats.count += 1;
+        stats.clients.set(sale.cliente_nome, clientStats);
+
+        statsMap.set(sale.vendedora, stats);
       });
 
       return Array.from(statsMap.entries())
-        .map(([nome, stats]) => ({
-          nome,
-          totalVendas: stats.total,
-          quantidadeVendas: stats.count,
-          clientesUnicos: stats.clients.size,
-          ticketMedio: stats.total / stats.count,
-        }))
+        .map(([nome, stats]) => {
+          const clientStats = Array.from(stats.clients.values());
+          const clientesUnicos = clientStats.length;
+          const totalTicketMedio = clientStats.reduce((sum, client) => sum + client.total / client.count, 0);
+
+          return {
+            nome,
+            totalVendas: stats.total,
+            quantidadeVendas: stats.count,
+            clientesUnicos,
+            ticketMedio: clientesUnicos > 0 ? totalTicketMedio / clientesUnicos : 0,
+          };
+        })
         .sort((a, b) => b.totalVendas - a.totalVendas);
     },
   });
@@ -64,7 +90,7 @@ export default function Ranking() {
         
         if (!current) {
           clientsMap.set(sale.cliente_nome, {
-            total: Number(sale.valor_total),
+            total: Number(sale.valor_total),            total: Number(sale.valor_total),
             lastPurchase: saleDate,
             clientId: sale.client_id || null,
           });
