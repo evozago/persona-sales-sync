@@ -281,23 +281,30 @@ export default function Imports() {
                     .from('sales')
                     .select('quantidade_itens, valor_total')
                     .eq('client_id', clientData.id);
-                  
-                  // Calcular totais existentes
+
+                  // Totais já registrados no sistema
                   const existingQty = existingSales?.reduce((sum, s) => sum + (s.quantidade_itens || 0), 0) || 0;
                   const existingValue = existingSales?.reduce((sum, s) => sum + (Number(s.valor_total) || 0), 0) || 0;
-                  
-                  // Criar nova venda com os novos valores
-                  await supabase
-                    .from('sales')
-                    .insert({
-                      client_id: clientData.id,
-                      cliente_nome: nome,
-                      data_venda: new Date(lastPurchaseDate).toISOString(),
-                      vendedora: row.ultimo_vendedor?.toString().trim() || '',
-                      quantidade_itens: quantidadeItens,
-                      valor_total: valorTotal,
-                      ticket_medio: valorTotal / quantidadeItens,
-                    });
+
+                  // Calcula apenas o DELTA a adicionar (idempotente)
+                  const deltaQty = quantidadeItens - existingQty;
+                  const deltaValue = valorTotal - existingValue;
+
+                  if (deltaQty > 0 && deltaValue > 0) {
+                    await supabase
+                      .from('sales')
+                      .insert({
+                        client_id: clientData.id,
+                        cliente_nome: nome,
+                        data_venda: new Date(lastPurchaseDate).toISOString(),
+                        vendedora: row.ultimo_vendedor?.toString().trim() || '',
+                        quantidade_itens: deltaQty,
+                        valor_total: deltaValue,
+                        ticket_medio: deltaValue / deltaQty,
+                      });
+                  } else {
+                    // Nada a inserir: planilha não trouxe crescimento de totais
+                  }
                 }
               } catch (error: any) {
                 console.warn(`Erro ao inserir venda para cliente ${row.cliente}:`, error.message);
