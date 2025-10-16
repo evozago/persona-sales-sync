@@ -269,13 +269,18 @@ export default function Imports() {
             }
 
             // Processar vendas - somar aos valores existentes
-            if (row.qtde_compras_total && row.total_gasto && lastPurchaseDate) {
+            if (row.total_gasto && lastPurchaseDate) {
               try {
                 const valorTotalStr = String(row.total_gasto).replace(',', '.');
                 const valorTotal = parseFloat(valorTotalStr) || 0;
-                const quantidadeItens = parseInt(String(row.qtde_compras_total)) || 0;
                 
-                if (valorTotal > 0 && quantidadeItens > 0) {
+                // Tentar diferentes formatos para quantidade de compras
+                const qtdCompras = row.qtde_compras_total || row.qtde_compras || row.quantidade_compras || 0;
+                const quantidadeCompras = parseInt(String(qtdCompras).replace(',', '.')) || 0;
+                
+                console.log(`Cliente ${nome}: ${quantidadeCompras} compras, R$ ${valorTotal}`);
+                
+                if (valorTotal > 0 && quantidadeCompras > 0) {
                   // Buscar vendas existentes do cliente
                   const { data: existingSales } = await supabase
                     .from('sales')
@@ -287,7 +292,7 @@ export default function Imports() {
                   const existingValue = existingSales?.reduce((sum, s) => sum + (Number(s.valor_total) || 0), 0) || 0;
 
                   // Calcula apenas o DELTA a adicionar (idempotente)
-                  const deltaQty = quantidadeItens - existingQty;
+                  const deltaQty = quantidadeCompras - existingQty;
                   const deltaValue = valorTotal - existingValue;
 
                   if (deltaQty > 0 && deltaValue > 0) {
@@ -303,7 +308,7 @@ export default function Imports() {
                         ticket_medio: deltaValue / deltaQty,
                       });
                   } else {
-                    // Nada a inserir: planilha não trouxe crescimento de totais
+                    console.log(`Cliente ${nome}: sem delta para inserir (${deltaQty} compras, R$ ${deltaValue})`);
                   }
                 }
               } catch (error: any) {
