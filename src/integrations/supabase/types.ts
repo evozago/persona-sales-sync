@@ -220,6 +220,7 @@ export type Database = {
           created_at: string | null
           data_venda: string
           id: string
+          quantidade_compras: number | null
           quantidade_itens: number | null
           ticket_medio: number | null
           valor_total: number | null
@@ -231,6 +232,7 @@ export type Database = {
           created_at?: string | null
           data_venda: string
           id?: string
+          quantidade_compras?: number | null
           quantidade_itens?: number | null
           ticket_medio?: number | null
           valor_total?: number | null
@@ -242,6 +244,7 @@ export type Database = {
           created_at?: string | null
           data_venda?: string
           id?: string
+          quantidade_compras?: number | null
           quantidade_itens?: number | null
           ticket_medio?: number | null
           valor_total?: number | null

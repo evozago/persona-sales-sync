@@ -284,18 +284,20 @@ export default function Imports() {
                   // Buscar vendas existentes do cliente
                   const { data: existingSales } = await supabase
                     .from('sales')
-                    .select('quantidade_itens, valor_total')
+                    .select('quantidade_compras, valor_total')
                     .eq('client_id', clientData.id);
 
                   // Totais já registrados no sistema
-                  const existingQty = existingSales?.reduce((sum, s) => sum + (s.quantidade_itens || 0), 0) || 0;
+                  const existingPurchases = existingSales?.reduce((sum, s) => sum + (s.quantidade_compras || 0), 0) || 0;
                   const existingValue = existingSales?.reduce((sum, s) => sum + (Number(s.valor_total) || 0), 0) || 0;
 
                   // Calcula apenas o DELTA a adicionar (idempotente)
-                  const deltaQty = quantidadeCompras - existingQty;
+                  const deltaPurchases = quantidadeCompras - existingPurchases;
                   const deltaValue = valorTotal - existingValue;
 
-                  if (deltaQty > 0 && deltaValue > 0) {
+                  if (deltaPurchases > 0 && deltaValue > 0) {
+                    const ticketMedio = deltaValue / deltaPurchases;
+                    
                     await supabase
                       .from('sales')
                       .insert({
@@ -303,12 +305,13 @@ export default function Imports() {
                         cliente_nome: nome,
                         data_venda: new Date(lastPurchaseDate).toISOString(),
                         vendedora: row.ultimo_vendedor?.toString().trim() || '',
-                        quantidade_itens: deltaQty,
+                        quantidade_compras: deltaPurchases,
+                        quantidade_itens: 0,
                         valor_total: deltaValue,
-                        ticket_medio: deltaValue / deltaQty,
+                        ticket_medio: ticketMedio,
                       });
                   } else {
-                    console.log(`Cliente ${nome}: sem delta para inserir (${deltaQty} compras, R$ ${deltaValue})`);
+                    console.log(`Cliente ${nome}: sem delta para inserir (${deltaPurchases} compras, R$ ${deltaValue})`);
                   }
                 }
               } catch (error: any) {
