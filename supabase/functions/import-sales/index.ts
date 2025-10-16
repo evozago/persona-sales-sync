@@ -47,6 +47,38 @@ serve(async (req) => {
       const excelEpoch = new Date(1899, 11, 30);
       return new Date(excelEpoch.getTime() + serial * 86400000);
     };
+    const normalizeNumber = (value: unknown) => {
+      if (value === null || value === undefined) return 0;
+      if (typeof value === "number") return value;
+      if (typeof value === "string") {
+        const sanitized = value
+          .replace(/\s+/g, "")
+          .replace(/\./g, "")
+          .replace(/,/g, ".");
+        const parsed = parseFloat(sanitized);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+      return 0;
+    };
+
+    const normalizeInteger = (value: unknown) => {
+      const num = normalizeNumber(value);
+      if (!Number.isFinite(num)) return 0;
+      const rounded = Math.round(num);
+      return rounded > 0 ? rounded : 0;
+    };
+
+    let supportsPurchaseCount = true;
+    const { error: purchaseColumnError } = await supabaseClient
+      .from("sales")
+      .select("quantidade_compras")
+      .limit(1);
+
+    if (purchaseColumnError && purchaseColumnError.message?.includes("quantidade_compras")) {
+      console.warn("Column quantidade_compras not found. Proceeding without it.");
+      supportsPurchaseCount = false;
+    }
+
 
     // Process in batches
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
@@ -58,15 +90,47 @@ serve(async (req) => {
           const clienteNome = row.cliente?.toString().trim();
           if (!clienteNome) continue;
 
+                    const valorTotal = normalizeNumber(
+            row.val_compras ?? row.valor_total ?? row.total_gasto ?? row.valor ?? 0,
+          );
+          const ticketMedioOriginal = normalizeNumber(row.ticket_medio ?? row.ticket_medio_cliente ?? 0);
+
+          const purchaseCandidates = [
+            row.quantidade_compras,
+            row.qtd_compras,
+            row.qtde_compras,
+            row.qtde_compras_total,
+            row.numero_compras,
+            row.numero_de_compras,
+          ];
+
+          let quantidadeCompras = 0;
+          for (const candidate of purchaseCandidates) {
+            quantidadeCompras = normalizeInteger(candidate);
+            if (quantidadeCompras > 0) break;
+          }
+
+          if (quantidadeCompras === 0 && valorTotal > 0 && ticketMedioOriginal > 0) {
+            const derived = Math.round(valorTotal / ticketMedioOriginal);
+            if (derived > 0) {
+              quantidadeCompras = derived;
+            }
+          }
+
+          const ticketMedio = quantidadeCompras > 0 ? valorTotal / quantidadeCompras : ticketMedioOriginal;
+
+
           const saleData = {
             cliente_nome: clienteNome,
             data_venda: convertExcelDate(row.ultima_compra) || new Date(),
             vendedora: row.ultimo_vendedor?.toString() || 'Não informado',
             quantidade_itens: parseInt(row.itens) || 0,
-            valor_total: parseFloat(row.val_compras) || 0,
-            ticket_medio: parseFloat(row.ticket_medio) || 0,
+            valor_total: valorTotal,
+            ticket_medio: ticketMedio || 0,
           };
-
+          if (supportsPurchaseCount) {
+            (saleData as Record<string, unknown>).quantidade_compras = quantidadeCompras;
+          }
           salesToInsert.push(saleData);
         } catch (err) {
           console.error('Error processing sale row:', err);
