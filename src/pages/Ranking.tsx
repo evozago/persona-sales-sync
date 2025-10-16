@@ -12,13 +12,42 @@ export default function Ranking() {
   const [expandedSaleswoman, setExpandedSaleswoman] = useState<string | null>(null);
   const [messageTemplates, setMessageTemplates] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<{ key: 'nome' | 'total' | 'lastPurchase' | 'days' | 'phone'; dir: 'asc' | 'desc' }>({ key: 'total', dir: 'desc' });
+  const derivePurchaseCount = (
+    valorTotal?: number | string | null,
+    quantidadeCompras?: number | string | null,
+    ticketMedio?: number | string | null
+  ) => {
+    const valor = Number(valorTotal ?? 0);
+    const quantity = Number(quantidadeCompras ?? 0);
 
+    if (Number.isFinite(quantity) && quantity > 0) {
+      return quantity;
+    }
+
+    const ticket = Number(ticketMedio ?? 0);
+
+    if (valor > 0 && Number.isFinite(ticket) && ticket > 0) {
+      const derived = Math.round(valor / ticket);
+      if (derived > 0) {
+        return derived;
+      }
+    }
+
+    if (valor > 0) {
+      return 1;
+    }
+
+    return 0;
+  };
+
+
+  
   const { data: saleswomenStats, isLoading } = useQuery({
     queryKey: ["saleswomen-ranking"],
     queryFn: async () => {
       const { data: sales } = await supabase
         .from("sales")
-        .select("vendedora, valor_total, cliente_nome");
+        .select("vendedora, valor_total, cliente_nome, quantidade_compras, ticket_medio");
 
       if (!sales) return [];
 
@@ -32,7 +61,9 @@ export default function Ranking() {
       >();
 
       sales.forEach((sale) => {
-        const valor = Number(sale.valor_total);
+        const valor = Number(sale.valor_total ?? 0) || 0;
+        const purchaseCount = derivePurchaseCount(sale.valor_total, (sale as any).quantidade_compras, (sale as any).ticket_medio);
+        const normalizedPurchases = purchaseCount > 0 ? purchaseCount : valor > 0 ? 1 : 0;
         const stats =
           statsMap.get(sale.vendedora) ||
           {
@@ -42,11 +73,11 @@ export default function Ranking() {
           };
 
         stats.total += valor;
-        stats.count += 1;
+        stats.count += normalizedPurchases;
 
         const clientStats = stats.clients.get(sale.cliente_nome) || { total: 0, count: 0 };
         clientStats.total += valor;
-        clientStats.count += 1;
+        clientStats.count += normalizedPurchases;
         stats.clients.set(sale.cliente_nome, clientStats);
 
         statsMap.set(sale.vendedora, stats);
@@ -56,12 +87,17 @@ export default function Ranking() {
         .map(([nome, stats]) => {
           const clientStats = Array.from(stats.clients.values());
           const clientesUnicos = clientStats.length;
-          const totalTicketMedio = clientStats.reduce((sum, client) => sum + client.total / client.count, 0);
+          const totalTicketMedio = clientStats.reduce((sum, client) => {
+            if (client.count > 0) {
+              return sum + client.total / client.count;
+            }
+            return sum;
+          }, 0);
 
           return {
             nome,
             totalVendas: stats.total,
-            quantidadeVendas: stats.count,
+            quantidadeVendas: Math.round(stats.count),
             clientesUnicos,
             ticketMedio: clientesUnicos > 0 ? totalTicketMedio / clientesUnicos : 0,
           };
@@ -77,25 +113,31 @@ export default function Ranking() {
 
       const { data: sales } = await supabase
         .from("sales")
-        .select("cliente_nome, valor_total, data_venda, client_id")
+        .select("cliente_nome, valor_total, data_venda, client_id, quantidade_compras, ticket_medio")
         .eq("vendedora", expandedSaleswoman);
 
       if (!sales) return null;
 
-      const clientsMap = new Map<string, { total: number; lastPurchase: Date; clientId: string | null }>();
+      const clientsMap = new Map<string, { total: number; lastPurchase: Date; clientId: string | null; purchases: number }>();
 
       for (const sale of sales) {
         const current = clientsMap.get(sale.cliente_nome);
         const saleDate = new Date(sale.data_venda);
-        
+                const valor = Number(sale.valor_total ?? 0) || 0;
+        const purchaseCount = derivePurchaseCount(sale.valor_total, (sale as any).quantidade_compras, (sale as any).ticket_medio);
+        const normalizedPurchases = purchaseCount > 0 ? purchaseCount : valor > 0 ? 1 : 0;
+
+
         if (!current) {
           clientsMap.set(sale.cliente_nome, {
-            total: Number(sale.valor_total),            total: Number(sale.valor_total),
+            total: valor,
             lastPurchase: saleDate,
             clientId: sale.client_id || null,
+                        purchases: normalizedPurchases,
           });
         } else {
-          current.total += Number(sale.valor_total);
+          current.total += valor;
+          current.purchases += normalizedPurchases;
           if (saleDate > current.lastPurchase) {
             current.lastPurchase = saleDate;
           }
@@ -126,6 +168,9 @@ export default function Ranking() {
           lastPurchase: data.lastPurchase,
           daysSinceLastPurchase: Math.floor((Date.now() - data.lastPurchase.getTime()) / (1000 * 60 * 60 * 24)),
           phone: phoneMap.get(nome) || null,
+                    purchases: data.purchases,
+          ticketMedio: data.purchases > 0 ? data.total / data.purchases : 0,
+
         }))
         .sort((a, b) => b.total - a.total);
     },
