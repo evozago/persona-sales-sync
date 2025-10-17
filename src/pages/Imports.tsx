@@ -6,33 +6,170 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 
-type ImportStatus = 'idle' | 'uploading' | 'success' | 'error';
+type ImportStatus = "idle" | "uploading" | "success" | "error";
+type ImportType = "clients" | "sales";
+type ImportResult = { imported: number; errors: number; total: number } | null;
+
+type SpreadsheetRow = {
+  cliente?: string;
+  cpf_cliente?: string;
+  telefone_principal?: string;
+  data_aniversario_cliente?: any;
+  qtde_compras_total?: any;
+  qtde_compras?: any;
+  quantidade_compras?: any;
+  qtd_compras?: any;
+  numero_compras?: any;
+  numero_de_compras?: any;
+  total_gasto?: any;
+  ticket_medio?: any;
+  data_ultima_compra?: any;
+  ultimo_vendedor?: string;
+  marcas_compradas?: string;
+  tamanhos_comprados?: string;
+  numeracao_comprados?: string;
+};
+
+type ImportProgress = { current: number; total: number };
+
+const INITIAL_PROGRESS: ImportProgress = { current: 0, total: 0 };
+
+const normalizeNumber = (value: any): number => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const sanitized = value
+      .replace(/\s+/g, "")
+      .replace(/\./g, "")
+      .replace(/,/g, ".");
+    const parsed = parseFloat(sanitized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const normalizeInteger = (value: any): number => {
+  const normalized = normalizeNumber(value);
+  if (!Number.isFinite(normalized)) return 0;
+  const rounded = Math.round(normalized);
+  return rounded > 0 ? rounded : 0;
+};
+
+const convertExcelDate = (value: any): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "number") {
+    const excelEpoch = new Date(1899, 11, 30);
+    return new Date(excelEpoch.getTime() + value * 86400000);
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+};
+
+const processArrayField = (field: string | null | undefined): string[] => {
+  if (!field || field === "[]" || field.toLowerCase?.() === "nan") return [];
+
+  const cleanField = String(field)
+    .replace(/[\[\]]/g, "")
+    .replace(/'/g, "")
+    .replace(/"/g, "");
+
+  return cleanField
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && item.toLowerCase() !== "nan");
+};
+
+const sanitizeBrand = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const trimmed = value.toString().trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const sanitizeClothingSize = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const cleaned = value.toString().trim();
+  if (!cleaned) return null;
+  return cleaned.toUpperCase();
+};
+
+const sanitizeShoeSize = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const cleaned = value.toString().trim();
+  if (!cleaned) return null;
+
+  const upper = cleaned.toUpperCase();
+  const nPrefixed = upper.match(/^N[-\s]*(.+)$/);
+  if (nPrefixed && nPrefixed[1]) {
+    const digits = nPrefixed[1].trim().replace(/\s+/g, "");
+    return `N-${digits}`;
+  }
+
+  return upper.replace(/\s+/g, "");
+};
+
+const derivePurchaseCount = (row: SpreadsheetRow, totalSpent: number): number => {
+  const directCount =
+    row.qtde_compras_total ??
+    row.qtde_compras ??
+    row.quantidade_compras ??
+    row.qtd_compras ??
+    row.numero_compras ??
+    row.numero_de_compras ??
+    0;
+
+  let normalized = normalizeInteger(directCount);
+
+  if (normalized === 0 && totalSpent > 0) {
+    const ticketMedio = normalizeNumber(row.ticket_medio);
+    if (ticketMedio > 0) {
+      const derived = Math.round(totalSpent / ticketMedio);
+      if (derived > 0) {
+        normalized = derived;
+      }
+    }
+  }
+
+  return normalized;
+};
 
 export default function Imports() {
-  const [clientsStatus, setClientsStatus] = useState<ImportStatus>('idle');
-  const [salesStatus, setSalesStatus] = useState<ImportStatus>('idle');
-  const [clientsResult, setClientsResult] = useState<any>(null);
-  const [salesResult, setSalesResult] = useState<any>(null);
+  const [clientsStatus, setClientsStatus] = useState<ImportStatus>("idle");
+  const [salesStatus, setSalesStatus] = useState<ImportStatus>("idle");
+  const [clientsResult, setClientsResult] = useState<ImportResult>(null);
+  const [salesResult, setSalesResult] = useState<ImportResult>(null);
   const [isClearing, setIsClearing] = useState(false);
-  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
+  const [importProgress, setImportProgress] = useState<ImportProgress>(INITIAL_PROGRESS);
   const { toast } = useToast();
+
+  const resetProgress = () => setImportProgress(INITIAL_PROGRESS);
 
   const handleClearData = async () => {
     setIsClearing(true);
     try {
-      await supabase.from('sales').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('client_brand_preferences').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('client_children').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('clients').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('sizes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      
+      await supabase.from("sales").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase
+        .from("client_brand_preferences")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase
+        .from("client_size_preferences")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase.from("client_children").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase.from("clients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase.from("brands").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await supabase.from("sizes").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
       toast({
         title: "Dados limpos!",
         description: "Todos os dados foram removidos com sucesso.",
       });
     } catch (error: any) {
-      console.error('Clear data error:', error);
+      console.error("Clear data error:", error);
       toast({
         title: "Erro ao limpar dados",
         description: error.message,
@@ -43,379 +180,332 @@ export default function Imports() {
     }
   };
 
-  const handleFileUpload = async (
-    file: File,
-    type: 'clients' | 'sales'
-  ) => {
-    const setStatus = type === 'clients' ? setClientsStatus : setSalesStatus;
-    const setResult = type === 'clients' ? setClientsResult : setSalesResult;
+  const handleFileUpload = async (file: File, type: ImportType) => {
+    const setStatus = type === "clients" ? setClientsStatus : setSalesStatus;
+    const setResult = type === "clients" ? setClientsResult : setSalesResult;
 
-    setStatus('uploading');
+    setStatus("uploading");
     setResult(null);
-    
-    const normalizeNumber = (value: any): number => {
-      if (value === null || value === undefined) return 0;
-      if (typeof value === 'number') return value;
-      if (typeof value === 'string') {
-        const sanitized = value
-          .replace(/\s+/g, '')
-          .replace(/\./g, '')
-          .replace(/,/g, '.');
-        const parsed = parseFloat(sanitized);
-        return Number.isFinite(parsed) ? parsed : 0;
-      }
-      return 0;
-    };
-
-    const normalizeInteger = (value: any): number => {
-      const num = normalizeNumber(value);
-      if (!Number.isFinite(num)) return 0;
-      const rounded = Math.round(num);
-      return rounded > 0 ? rounded : 0;
-    };
-
-
-    const convertExcelDate = (value: any) => {
-      if (!value) return null;
-      if (value instanceof Date) return value;
-      if (typeof value === 'number') {
-        const excelEpoch = new Date(1899, 11, 30);
-        return new Date(excelEpoch.getTime() + value * 86400000);
-      }
-      if (typeof value === 'string') {
-        const d = new Date(value);
-        return isNaN(d.getTime()) ? null : d;
-      }
-      return null;
-    };
-
-    const processArrayField = (field: string | null | undefined): string[] => {
-      if (!field || field === '[]' || field === 'nan') return [];
-      
-      // Converter para string e remover colchetes e aspas
-      const cleanField = String(field)
-        .replace(/[\[\]]/g, '')  // Remove colchetes
-        .replace(/'/g, '')        // Remove aspas simples
-        .replace(/"/g, '');       // Remove aspas duplas
-      
-      // Separar por vírgula e limpar
-      return cleanField
-        .split(',')
-        .map(item => item.trim())
-        .filter(item => item.length > 0 && item !== 'nan');
-    };
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const data = new Uint8Array(arrayBuffer);
-      const workbook = XLSX.read(data, { type: 'array' });
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const jsonData: any[] = XLSX.utils.sheet_to_json(firstSheet);
+      const rows: SpreadsheetRow[] = XLSX.utils.sheet_to_json(firstSheet);
 
-      let imported = 0;
-      let errors = 0;
-
-      if (type === 'clients') {
-                let supportsPurchaseCount = true;
-        const { error: purchaseColumnError } = await supabase
-          .from('sales')
-          .select('quantidade_compras')
-          .limit(1);
-
-        if (purchaseColumnError && purchaseColumnError.message?.includes('quantidade_compras')) {
-          console.warn('Coluna quantidade_compras não encontrada. Prosseguindo sem controle de duplicidade.');
-          supportsPurchaseCount = false;
-        }
-
-
-        setImportProgress({ current: 0, total: jsonData.length });
-        
-        // Coletar todas as marcas e tamanhos únicos para inserção em lote
-        const allBrands = new Set<string>();
-        const allSizesRoupas = new Set<string>();
-        const allSizesCalcados = new Set<string>();
-        
-        for (const row of jsonData) {
-          const marcas = processArrayField(row.marcas_compradas);
-          const tamanhosRoupas = processArrayField(row.tamanhos_comprados);
-          const numeracoesCalcados = processArrayField(row.numeracao_comprados);
-          
-          marcas.forEach(m => allBrands.add(m));
-          tamanhosRoupas.forEach(t => allSizesRoupas.add(t));
-          numeracoesCalcados.forEach(n => allSizesCalcados.add(n));
-        }
-        
-        // Inserir todas as marcas de uma vez
-        if (allBrands.size > 0) {
-          const brandsToInsert = Array.from(allBrands).map(nome => ({ nome }));
-          await supabase
-            .from('brands')
-            .upsert(brandsToInsert, { onConflict: 'nome', ignoreDuplicates: true });
-        }
-        
-        // Inserir todos os tamanhos de roupas de uma vez
-        if (allSizesRoupas.size > 0) {
-          const sizesToInsert = Array.from(allSizesRoupas).map(nome => ({ nome, tipo: 'Roupas' }));
-          for (const size of sizesToInsert) {
-            try {
-              await supabase
-                .from('sizes')
-                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
-            } catch (error) {
-              console.warn(`Erro ao inserir tamanho ${size.nome}:`, error);
-            }
-          }
-        }
-        
-        // Inserir todos os tamanhos de calçados de uma vez
-        if (allSizesCalcados.size > 0) {
-          const sizesToInsert = Array.from(allSizesCalcados).map(nome => ({ nome, tipo: 'Calçados' }));
-          for (const size of sizesToInsert) {
-            try {
-              await supabase
-                .from('sizes')
-                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
-            } catch (error) {
-              console.warn(`Erro ao inserir numeração ${size.nome}:`, error);
-            }
-          }
-        }
-
-        // Processar cada cliente
-        for (let i = 0; i < jsonData.length; i++) {
-          const row = jsonData[i];
-          
-          try {
-            // Atualizar progresso
-            setImportProgress({ current: i + 1, total: jsonData.length });
-            
-            // Pular linhas sem nome de cliente
-            if (!row.cliente || String(row.cliente).trim() === '') {
-              errors++;
-              continue;
-            }
-
-            const birthDate = row.data_aniversario_cliente ? convertExcelDate(row.data_aniversario_cliente) : null;
-            const lastPurchaseDate = row.data_ultima_compra ? convertExcelDate(row.data_ultima_compra) : null;
-            const cpf = row.cpf_cliente?.toString().trim() || null;
-            const nome = row.cliente?.toString().trim() || '';
-
-            // Verificar se cliente já existe (por CPF ou nome)
-            let existingClient = null;
-            if (cpf) {
-              const { data } = await supabase
-                .from('clients')
-                .select('*')
-                .eq('cpf', cpf)
-                .maybeSingle();
-              existingClient = data;
-            }
-            
-            // Se não encontrou por CPF, buscar por nome
-            if (!existingClient && nome) {
-              const { data } = await supabase
-                .from('clients')
-                .select('*')
-                .eq('nome', nome)
-                .maybeSingle();
-              existingClient = data;
-            }
-
-            let clientData;
-            
-            if (existingClient) {
-              // Cliente existe - atualizar apenas vendedora responsável
-              const { data: updatedClient } = await supabase
-                .from('clients')
-                .update({
-                  vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || existingClient.vendedora_responsavel,
-                })
-                .eq('id', existingClient.id)
-                .select()
-                .single();
-              
-              clientData = updatedClient || existingClient;
-            } else {
-              // Cliente novo - inserir todos os dados
-              const { data: newClient, error: clientError } = await supabase
-                .from('clients')
-                .insert({
-                  nome,
-                  cpf,
-                  telefone_1: row.telefone_principal?.toString().trim() || null,
-                  data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
-                  vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || null,
-                })
-                .select()
-                .single();
-
-              if (clientError) {
-                console.error(`Erro ao inserir cliente linha ${i + 1}:`, clientError.message);
-                errors++;
-                continue;
-              }
-
-              clientData = newClient;
-            }
-
-            if (!clientData) {
-              console.error(`Sem dados de cliente retornados - linha ${i + 1}`);
-              errors++;
-              continue;
-            }
-
-            // Processar marcas - adicionar apenas as que não existem
-            const marcas = processArrayField(row.marcas_compradas);
-            
-            // Buscar marcas já vinculadas ao cliente
-            const { data: existingPrefs } = await supabase
-              .from('client_brand_preferences')
-              .select('brand_id, brands(nome)')
-              .eq('client_id', clientData.id);
-            
-            const existingBrandNames = new Set(
-              existingPrefs?.map((p: any) => p.brands?.nome).filter(Boolean) || []
-            );
-            
-            for (const marca of marcas) {
-              // Pular se marca já está vinculada
-              if (existingBrandNames.has(marca)) continue;
-              
-              try {
-                const { data: brandData } = await supabase
-                  .from('brands')
-                  .select('id')
-                  .eq('nome', marca)
-                  .maybeSingle();
-
-                if (brandData?.id) {
-                  await supabase
-                    .from('client_brand_preferences')
-                    .insert({
-                      client_id: clientData.id,
-                      brand_id: brandData.id,
-                    })
-                    .select();
-                }
-              } catch (error: any) {
-                console.warn(`Erro ao vincular marca ${marca}:`, error.message);
-              }
-            }
-
-            // Processar vendas - somar aos valores existentes
-            if (row.total_gasto && lastPurchaseDate) {
-              try {
-                const valorTotal = normalizeNumber(row.total_gasto);
-
-
-                // Tentar diferentes formatos para quantidade de compras
-                const qtdCompras =
-                  row.qtde_compras_total ||
-                  row.qtde_compras ||
-                  row.quantidade_compras ||
-                  row.qtd_compras ||
-                  row.numero_compras ||
-                  row.numero_de_compras ||
-                  0;
-                let quantidadeCompras = normalizeInteger(qtdCompras);
-
-                if (quantidadeCompras === 0) {
-                  const ticketMedioPlanilha = normalizeNumber(row.ticket_medio);
-                  if (valorTotal > 0 && ticketMedioPlanilha > 0) {
-                    const derived = Math.round(valorTotal / ticketMedioPlanilha);
-                    if (derived > 0) {
-                      quantidadeCompras = derived;
-                    }
-                  }
-                }
-
-                
-                console.log(`Cliente ${nome}: ${quantidadeCompras} compras, R$ ${valorTotal}`);
-                
-                if (valorTotal > 0 && quantidadeCompras > 0) {
-                  // Buscar vendas existentes do cliente
-                  const { data: existingSales, error: existingError } = await supabase
-                    .from('sales')
-                    .select(supportsPurchaseCount ? 'quantidade_compras, valor_total' : 'valor_total')
-                    .eq('client_id', clientData.id);
-                  if (existingError && !existingError.message?.includes('quantidade_compras')) {
-                    throw existingError;
-                  }
-
-                  // Totais já registrados no sistema
-                  const existingPurchases = supportsPurchaseCount
-                    ? (existingSales as any)?.reduce((sum: number, s: any) => sum + (s.quantidade_compras || 0), 0) || 0
-                    : 0;
-                  const existingValue = (existingSales as any)?.reduce((sum: number, s: any) => sum + (Number(s.valor_total) || 0), 0) || 0;
-
-                  // Calcula apenas o DELTA a adicionar (idempotente)
-                  const deltaPurchases = quantidadeCompras - existingPurchases;
-                  const deltaValue = valorTotal - existingValue;
-
-                  if (deltaPurchases > 0 && deltaValue > 0) {
-                    const ticketMedio = deltaValue / deltaPurchases;
-                    
-                    const saleRecord: Record<string, any> = {
-                      client_id: clientData.id,
-                      cliente_nome: nome,
-                      data_venda: new Date(lastPurchaseDate).toISOString(),
-                      vendedora: row.ultimo_vendedor?.toString().trim() || '',
-                      quantidade_itens: 0,
-                      valor_total: deltaValue,
-                      ticket_medio: ticketMedio,
-                    };
-
-                    if (supportsPurchaseCount) {
-                      saleRecord.quantidade_compras = deltaPurchases;
-                    }
-
-
-                    await supabase
-                      .from('sales')
-                      .insert(saleRecord as any);
-                  } else {
-                    console.log(`Cliente ${nome}: sem delta para inserir (${deltaPurchases} compras, R$ ${deltaValue})`);
-                  }
-                }
-              } catch (error: any) {
-                console.warn(`Erro ao inserir venda para cliente ${row.cliente}:`, error.message);
-              }
-            }
-
-            imported++;
-          } catch (error: any) {
-            console.error(`Erro ao processar linha ${i + 1}:`, error.message);
-            errors++;
-          }
-        }
-
-        setImportProgress({ current: 0, total: 0 });
-        setStatus('success');
-        setResult({ imported, errors, total: jsonData.length });
-        toast({
-          title: "Importação concluída!",
-          description: `${imported} clientes importados de ${jsonData.length} linhas${errors > 0 ? `. ${errors} erros encontrados` : ''}`,
-        });
-      } else {
-        // Sales import não é mais necessário - dados vêm junto com clientes
-        setStatus('success');
+      if (type !== "clients") {
+        setStatus("success");
         setResult({ imported: 0, errors: 0, total: 0 });
         toast({
           title: "Importação de vendas",
           description: "Use a importação de clientes para importar vendas.",
         });
+        return;
       }
+
+      if (rows.length === 0) {
+        setStatus("success");
+        setResult({ imported: 0, errors: 0, total: 0 });
+        toast({
+          title: "Arquivo vazio",
+          description: "Nenhuma linha encontrada na planilha.",
+        });
+        return;
+      }
+
+      setImportProgress({ current: 0, total: rows.length });
+
+      // Detecta suporte à coluna quantidade_compras
+      let supportsPurchaseCount = true;
+      const { error: purchaseColumnError } = await supabase.from("sales").select("quantidade_compras").limit(1);
+      if (purchaseColumnError?.message?.includes("quantidade_compras")) {
+        console.warn("Coluna quantidade_compras não encontrada. Prosseguindo sem controle de duplicidade.");
+        supportsPurchaseCount = false;
+      }
+
+      // Coletar marcas e tamanhos únicos
+      const brandSet = new Set<string>();
+      const clothingSizeSet = new Set<string>();
+      const shoeSizeSet = new Set<string>();
+
+      for (const row of rows) {
+        processArrayField(row.marcas_compradas)
+          .map(sanitizeBrand)
+          .filter((marca): marca is string => Boolean(marca))
+          .forEach((marca) => brandSet.add(marca));
+
+        processArrayField(row.tamanhos_comprados)
+          .map(sanitizeClothingSize)
+          .filter((size): size is string => Boolean(size))
+          .forEach((size) => clothingSizeSet.add(size));
+
+        processArrayField(row.numeracao_comprados)
+          .map(sanitizeShoeSize)
+          .filter((size): size is string => Boolean(size))
+          .forEach((size) => shoeSizeSet.add(size));
+      }
+
+      if (brandSet.size > 0) {
+        const brandPayload = Array.from(brandSet).map((nome) => ({ nome }));
+        await supabase
+          .from("brands")
+          .upsert(brandPayload, { onConflict: "nome", ignoreDuplicates: true });
+      }
+
+      const sizeInserts: { nome: string; tipo: "roupa" | "calçado" }[] = [];
+      Array.from(clothingSizeSet).forEach((nome) => sizeInserts.push({ nome, tipo: "roupa" }));
+      Array.from(shoeSizeSet).forEach((nome) => sizeInserts.push({ nome, tipo: "calçado" }));
+
+      if (sizeInserts.length > 0) {
+        await supabase
+          .from("sizes")
+          .upsert(sizeInserts, { onConflict: "nome,tipo", ignoreDuplicates: true });
+      }
+
+      const brandMap = new Map<string, string>();
+      if (brandSet.size > 0) {
+        const { data: brands } = await supabase
+          .from("brands")
+          .select("id, nome")
+          .in("nome", Array.from(brandSet));
+        brands?.forEach((brand) => {
+          if (brand.nome) {
+            brandMap.set(brand.nome, brand.id);
+          }
+        });
+      }
+
+      const clothingSizeMap = new Map<string, string>();
+      if (clothingSizeSet.size > 0) {
+        const { data: clothingSizes } = await supabase
+          .from("sizes")
+          .select("id, nome")
+          .eq("tipo", "roupa")
+          .in("nome", Array.from(clothingSizeSet));
+        clothingSizes?.forEach((size) => {
+          if (size.nome) {
+            clothingSizeMap.set(size.nome, size.id);
+          }
+        });
+      }
+
+      const shoeSizeMap = new Map<string, string>();
+      if (shoeSizeSet.size > 0) {
+        const { data: shoeSizes } = await supabase
+          .from("sizes")
+          .select("id, nome")
+          .eq("tipo", "calçado")
+          .in("nome", Array.from(shoeSizeSet));
+        shoeSizes?.forEach((size) => {
+          if (size.nome) {
+            shoeSizeMap.set(size.nome, size.id);
+          }
+        });
+      }
+
+      let imported = 0;
+      let errors = 0;
+
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        setImportProgress({ current: index + 1, total: rows.length });
+
+        try {
+          const clientName = row.cliente?.toString().trim();
+          if (!clientName) {
+            errors++;
+            continue;
+          }
+
+          const cpf = row.cpf_cliente?.toString().trim() || null;
+          const birthDate = convertExcelDate(row.data_aniversario_cliente);
+          const lastPurchaseDate = convertExcelDate(row.data_ultima_compra);
+          const lastSeller = row.ultimo_vendedor?.toString().trim() || null;
+
+          let existingClient = null;
+
+          if (cpf) {
+            const { data } = await supabase.from("clients").select("*").eq("cpf", cpf).maybeSingle();
+            existingClient = data;
+          }
+
+          if (!existingClient) {
+            const { data } = await supabase.from("clients").select("*").eq("nome", clientName).maybeSingle();
+            existingClient = data;
+          }
+
+          let clientId: string | null = null;
+
+          if (existingClient) {
+            const { data: updatedClient, error: updateError } = await supabase
+              .from("clients")
+              .update({ vendedora_responsavel: lastSeller ?? existingClient.vendedora_responsavel })
+              .eq("id", existingClient.id)
+              .select()
+              .maybeSingle();
+
+            if (updateError) {
+              throw updateError;
+            }
+
+            clientId = (updatedClient ?? existingClient)?.id ?? null;
+          } else {
+            const { data: insertedClient, error: insertError } = await supabase
+              .from("clients")
+              .insert({
+                nome: clientName,
+                cpf,
+                telefone_1: row.telefone_principal?.toString().trim() || null,
+                data_nascimento: birthDate ? birthDate.toISOString().split("T")[0] : null,
+                vendedora_responsavel: lastSeller,
+              })
+              .select()
+              .single();
+
+            if (insertError) {
+              throw insertError;
+            }
+
+            clientId = insertedClient?.id ?? null;
+          }
+
+          if (!clientId) {
+            throw new Error("Não foi possível determinar o ID do cliente");
+          }
+
+          // Vincular marcas ao cliente
+          const brandPreferences = Array.from(
+            new Set(
+              processArrayField(row.marcas_compradas)
+                .map(sanitizeBrand)
+                .filter((marca): marca is string => Boolean(marca))
+            )
+          )
+            .map((marca) => {
+              const brandId = brandMap.get(marca);
+              return brandId ? { client_id: clientId!, brand_id: brandId } : null;
+            })
+            .filter((entry): entry is { client_id: string; brand_id: string } => Boolean(entry));
+
+          if (brandPreferences.length > 0) {
+            await supabase
+              .from("client_brand_preferences")
+              .upsert(brandPreferences, {
+                onConflict: "client_id,brand_id",
+                ignoreDuplicates: true,
+              });
+          }
+
+          // Vincular tamanhos de roupa e calçado
+          const clothingPreferences = Array.from(
+            new Set(
+              processArrayField(row.tamanhos_comprados)
+                .map(sanitizeClothingSize)
+                .filter((size): size is string => Boolean(size))
+            )
+          )
+            .map((size) => {
+              const sizeId = clothingSizeMap.get(size);
+              return sizeId ? { client_id: clientId!, size_id: sizeId } : null;
+            })
+            .filter((entry): entry is { client_id: string; size_id: string } => Boolean(entry));
+
+          const shoePreferences = Array.from(
+            new Set(
+              processArrayField(row.numeracao_comprados)
+                .map(sanitizeShoeSize)
+                .filter((size): size is string => Boolean(size))
+            )
+          )
+            .map((size) => {
+              const sizeId = shoeSizeMap.get(size);
+              return sizeId ? { client_id: clientId!, size_id: sizeId } : null;
+            })
+            .filter((entry): entry is { client_id: string; size_id: string } => Boolean(entry));
+
+          const sizePreferences = [...clothingPreferences, ...shoePreferences];
+
+          if (sizePreferences.length > 0) {
+            await supabase
+              .from("client_size_preferences")
+              .upsert(sizePreferences, {
+                onConflict: "client_id,size_id",
+                ignoreDuplicates: true,
+              });
+          }
+
+          // Processar resumo de vendas
+          const totalSpent = normalizeNumber(row.total_gasto);
+          const purchaseCount = derivePurchaseCount(row, totalSpent);
+
+          if (totalSpent > 0 && purchaseCount > 0 && lastPurchaseDate) {
+            const selectColumns = supportsPurchaseCount ? "quantidade_compras, valor_total" : "valor_total";
+            const { data: existingSales, error: salesError } = await supabase
+              .from("sales")
+              .select(selectColumns)
+              .eq("client_id", clientId);
+
+            if (salesError && !salesError.message?.includes("quantidade_compras")) {
+              throw salesError;
+            }
+
+            const existingPurchaseTotal = supportsPurchaseCount
+              ? existingSales?.reduce((sum, sale) => sum + (sale.quantidade_compras ?? 0), 0) ?? 0
+              : 0;
+            const existingValueTotal = existingSales?.reduce((sum, sale) => sum + Number(sale.valor_total ?? 0), 0) ?? 0;
+
+            const deltaPurchases = purchaseCount - existingPurchaseTotal;
+            const deltaValue = totalSpent - existingValueTotal;
+
+            if (deltaPurchases > 0 && deltaValue > 0) {
+              const ticketMedio = deltaValue / deltaPurchases;
+              const saleRecord: Record<string, any> = {
+                client_id: clientId,
+                cliente_nome: clientName,
+                data_venda: new Date(lastPurchaseDate).toISOString(),
+                vendedora: lastSeller ?? "",
+                quantidade_itens: 0,
+                valor_total: deltaValue,
+                ticket_medio: ticketMedio,
+              };
+
+              if (supportsPurchaseCount) {
+                saleRecord.quantidade_compras = deltaPurchases;
+              }
+
+              await supabase.from("sales").insert(saleRecord);
+            }
+          }
+
+          imported++;
+        } catch (error: any) {
+          console.error(`Erro ao processar linha ${index + 1}:`, error?.message ?? error);
+          errors++;
+        }
+      }
+
+      resetProgress();
+      setStatus("success");
+      const result = { imported, errors, total: rows.length };
+      setResult(result);
+      toast({
+        title: "Importação concluída!",
+        description: `${imported} clientes importados de ${rows.length} linhas${
+          errors > 0 ? `. ${errors} erros encontrados` : ""
+        }`,
+      });
     } catch (error: any) {
-      console.error('Import error:', error);
-      setStatus('error');
+      console.error("Import error:", error);
+      setStatus("error");
       toast({
         title: "Erro na importação",
-        description: error.message || "Ocorreu um erro ao processar o arquivo",
+        description: error?.message ?? "Ocorreu um erro ao processar o arquivo.",
         variant: "destructive",
       });
+    } finally {
+      resetProgress();
     }
   };
-
 
   const ImportCard = ({
     title,
@@ -428,17 +518,17 @@ export default function Imports() {
     title: string;
     description: string;
     status: ImportStatus;
-    result: any;
+    result: ImportResult;
     onFileSelect: (file: File) => void;
     gradient: string;
   }) => (
     <Card className="p-8 text-center space-y-4 hover:shadow-elevated transition-all">
       <div className={`w-16 h-16 rounded-full bg-gradient-to-br ${gradient} mx-auto flex items-center justify-center`}>
-        {status === 'uploading' ? (
+        {status === "uploading" ? (
           <Loader2 className="w-8 h-8 text-white animate-spin" />
-        ) : status === 'success' ? (
+        ) : status === "success" ? (
           <CheckCircle className="w-8 h-8 text-white" />
-        ) : status === 'error' ? (
+        ) : status === "error" ? (
           <AlertCircle className="w-8 h-8 text-white" />
         ) : (
           <Upload className="w-8 h-8 text-white" />
@@ -450,13 +540,13 @@ export default function Imports() {
         <p className="text-muted-foreground text-sm mb-4">{description}</p>
       </div>
 
-      {status === 'uploading' && importProgress.total > 0 && (
+      {status === "uploading" && importProgress.total > 0 && (
         <div className="p-4 bg-muted rounded-lg text-sm space-y-2">
           <p className="text-muted-foreground">
             Processando: {importProgress.current} de {importProgress.total}
           </p>
           <div className="w-full bg-background rounded-full h-2">
-            <div 
+            <div
               className="bg-primary h-2 rounded-full transition-all duration-300"
               style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
             />
@@ -467,9 +557,7 @@ export default function Imports() {
       {result && (
         <div className="p-4 bg-muted rounded-lg text-sm space-y-1">
           <p className="text-success font-semibold">✓ {result.imported} importados</p>
-          {result.errors > 0 && (
-            <p className="text-destructive">✗ {result.errors} erros</p>
-          )}
+          {result.errors > 0 && <p className="text-destructive">✗ {result.errors} erros</p>}
           <p className="text-muted-foreground">Total: {result.total} linhas</p>
         </div>
       )}
@@ -480,18 +568,18 @@ export default function Imports() {
           accept=".xlsx,.xls,.csv"
           id={`file-${title}`}
           className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
+          onChange={(event) => {
+            const file = event.target.files?.[0];
             if (file) onFileSelect(file);
           }}
-          disabled={status === 'uploading'}
+          disabled={status === "uploading"}
         />
         <Button
           onClick={() => document.getElementById(`file-${title}`)?.click()}
-          disabled={status === 'uploading'}
+          disabled={status === "uploading"}
           className={`bg-gradient-to-r ${gradient} hover:opacity-90`}
         >
-          {status === 'uploading' ? (
+          {status === "uploading" ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               Processando...
@@ -509,25 +597,21 @@ export default function Imports() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
             Importações
           </h1>
           <p className="text-muted-foreground mt-2">Importe dados de planilhas Excel</p>
         </div>
-        <Button 
-          onClick={handleClearData} 
-          disabled={isClearing}
-          variant="destructive"
-        >
+        <Button onClick={handleClearData} disabled={isClearing} variant="destructive">
           {isClearing ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               Limpando...
             </>
           ) : (
-            'Limpar Todos os Dados'
+            "Limpar Todos os Dados"
           )}
         </Button>
       </div>
@@ -538,7 +622,7 @@ export default function Imports() {
           description="Faça upload da planilha unificada"
           status={clientsStatus}
           result={clientsResult}
-          onFileSelect={(file) => handleFileUpload(file, 'clients')}
+          onFileSelect={(uploadedFile) => handleFileUpload(uploadedFile, "clients")}
           gradient="from-primary to-primary-glow"
         />
 
@@ -547,7 +631,7 @@ export default function Imports() {
           description="Não disponível - use importação de clientes"
           status={salesStatus}
           result={salesResult}
-          onFileSelect={(file) => handleFileUpload(file, 'sales')}
+          onFileSelect={(uploadedFile) => handleFileUpload(uploadedFile, "sales")}
           gradient="from-accent to-secondary"
         />
       </div>
@@ -560,26 +644,26 @@ export default function Imports() {
             <ul className="space-y-1 ml-4">
               <li>• Colunas: cliente, cpf_cliente, telefone_principal, data_aniversario_cliente</li>
               <li>• qtde_compras_total, total_gasto, data_ultima_compra, ultimo_vendedor</li>
-              <li>• marcas_compradas, tamanhos_comprados, numeracao_comprados</li>
+              <li>• marcas_compradas, tamanhos_comprados (roupas), numeracao_comprados (calçados)</li>
             </ul>
           </div>
-          
+
           <div>
             <p className="font-medium text-foreground mb-1">🏷️ Formato de Arrays:</p>
             <ul className="space-y-1 ml-4">
               <li>• Arrays devem estar no formato: ['ITEM1', 'ITEM2']</li>
-              <li>• marcas_compradas → cria/vincula marcas</li>
-              <li>• tamanhos_comprados → cria tamanhos de Roupas</li>
-              <li>• numeracao_comprados → cria tamanhos de Calçados</li>
+              <li>• marcas_compradas → cria e vincula marcas ao cliente</li>
+              <li>• tamanhos_comprados → registra tamanhos de roupas do cliente</li>
+              <li>• numeracao_comprados → valores como N-36, N-38 serão associados como calçados</li>
             </ul>
           </div>
 
           <div className="pt-3 border-t border-border">
             <p className="font-medium text-foreground mb-1">⚠️ Observações:</p>
             <ul className="space-y-1 ml-4">
-              <li>• Cada cliente será importado com marcas, tamanhos e resumo de vendas</li>
-              <li>• Dados faltantes podem ser completados manualmente depois</li>
-              <li>• Marcas e tamanhos serão criados automaticamente se não existirem</li>
+              <li>• Cada cliente é atualizado ou criado com marcas, tamanhos e resumo de compras</li>
+              <li>• Quantidades de compras faltantes são derivadas pelo ticket médio quando possível</li>
+              <li>• Marcas e tamanhos inexistentes são criados automaticamente e vinculados</li>
             </ul>
           </div>
         </div>
