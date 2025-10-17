@@ -342,12 +342,11 @@ export default function Imports() {
                     throw existingError;
                   }
 
-
                   // Totais já registrados no sistema
                   const existingPurchases = supportsPurchaseCount
-                    ? existingSales?.reduce((sum: number, s: any) => sum + (s.quantidade_compras || 0), 0) || 0
+                    ? (existingSales as any)?.reduce((sum: number, s: any) => sum + (s.quantidade_compras || 0), 0) || 0
                     : 0;
-                  const existingValue = existingSales?.reduce((sum, s) => sum + (Number(s.valor_total) || 0), 0) || 0;
+                  const existingValue = (existingSales as any)?.reduce((sum: number, s: any) => sum + (Number(s.valor_total) || 0), 0) || 0;
 
                   // Calcula apenas o DELTA a adicionar (idempotente)
                   const deltaPurchases = quantidadeCompras - existingPurchases;
@@ -373,16 +372,7 @@ export default function Imports() {
 
                     await supabase
                       .from('sales')
-                      .insert(saleRecord);
-                        client_id: clientData.id,
-                        cliente_nome: nome,
-                        data_venda: new Date(lastPurchaseDate).toISOString(),
-                        vendedora: row.ultimo_vendedor?.toString().trim() || '',
-                        quantidade_compras: deltaPurchases,
-                        quantidade_itens: 0,
-                        valor_total: deltaValue,
-                        ticket_medio: ticketMedio,
-                      });
+                      .insert(saleRecord as any);
                   } else {
                     console.log(`Cliente ${nome}: sem delta para inserir (${deltaPurchases} compras, R$ ${deltaValue})`);
                   }
