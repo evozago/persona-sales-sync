@@ -52,21 +52,20 @@ export default function Imports() {
 
     setStatus('uploading');
     setResult(null);
-
-                  title: "Dados limpos!",
-        description: "Todos os dados foram removidos com sucesso.",
-      });
-    } catch (error: any) {
-      console.error('Clear data error:', error);
-      toast({
-        title: "Erro ao limpar dados",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsClearing(false);
-    }
- };
+    
+    const normalizeNumber = (value: any): number => {
+      if (value === null || value === undefined) return 0;
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        const sanitized = value
+          .replace(/\s+/g, '')
+          .replace(/\./g, '')
+          .replace(/,/g, '.');
+        const parsed = parseFloat(sanitized);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+      return 0;
+    };
 
     const normalizeInteger = (value: any): number => {
       const num = normalizeNumber(value);
@@ -74,6 +73,7 @@ export default function Imports() {
       const rounded = Math.round(num);
       return rounded > 0 ? rounded : 0;
     };
+
 
     const convertExcelDate = (value: any) => {
       if (!value) return null;
@@ -91,35 +91,18 @@ export default function Imports() {
 
     const processArrayField = (field: string | null | undefined): string[] => {
       if (!field || field === '[]' || field === 'nan') return [];
-
+      
+      // Converter para string e remover colchetes e aspas
       const cleanField = String(field)
-        .replace(/[\[\]]/g, '')
-        .replace(/'/g, '')
-        .replace(/"/g, '');
-
+        .replace(/[\[\]]/g, '')  // Remove colchetes
+        .replace(/'/g, '')        // Remove aspas simples
+        .replace(/"/g, '');       // Remove aspas duplas
+      
+      // Separar por vírgula e limpar
       return cleanField
         .split(',')
         .map(item => item.trim())
-        .filter(item => item.length > 0 && item.toLowerCase() !== 'nan');
-    };
-
-    const sanitizeClothingSize = (value: string | null | undefined): string | null => {
-      if (!value) return null;
-      const cleaned = value.toString().trim();
-      if (!cleaned) return null;
-      return cleaned.toUpperCase();
-    };
-
-    const sanitizeShoeSize = (value: string | null | undefined): string | null => {
-      if (!value) return null;
-      const cleaned = value.toString().trim();
-      if (!cleaned) return null;
-      const normalized = cleaned.toUpperCase();
-      const prefixMatch = normalized.match(/^N-\s*(.+)$/);
-      if (prefixMatch && prefixMatch[1]) {
-        return prefixMatch[1].trim().replace(/\s+/g, ' ');
-      }
-      return normalized.replace(/\s+/g, ' ');
+        .filter(item => item.length > 0 && item !== 'nan');
     };
 
     try {
@@ -133,7 +116,7 @@ export default function Imports() {
       let errors = 0;
 
       if (type === 'clients') {
-        let supportsPurchaseCount = true;
+                let supportsPurchaseCount = true;
         const { error: purchaseColumnError } = await supabase
           .from('sales')
           .select('quantidade_compras')
@@ -144,27 +127,24 @@ export default function Imports() {
           supportsPurchaseCount = false;
         }
 
+
         setImportProgress({ current: 0, total: jsonData.length });
         
         // Coletar todas as marcas e tamanhos únicos para inserção em lote
         const allBrands = new Set<string>();
         const allSizesRoupas = new Set<string>();
         const allSizesCalcados = new Set<string>();
-
+        
         for (const row of jsonData) {
           const marcas = processArrayField(row.marcas_compradas);
-          const tamanhosRoupas = processArrayField(row.tamanhos_comprados)
-            .map(sanitizeClothingSize)
-            .filter((t): t is string => Boolean(t));
-          const numeracoesCalcados = processArrayField(row.numeracao_comprados)
-            .map(sanitizeShoeSize)
-            .filter((n): n is string => Boolean(n));
-
+          const tamanhosRoupas = processArrayField(row.tamanhos_comprados);
+          const numeracoesCalcados = processArrayField(row.numeracao_comprados);
+          
           marcas.forEach(m => allBrands.add(m));
           tamanhosRoupas.forEach(t => allSizesRoupas.add(t));
           numeracoesCalcados.forEach(n => allSizesCalcados.add(n));
         }
-
+        
         // Inserir todas as marcas de uma vez
         if (allBrands.size > 0) {
           const brandsToInsert = Array.from(allBrands).map(nome => ({ nome }));
@@ -172,66 +152,33 @@ export default function Imports() {
             .from('brands')
             .upsert(brandsToInsert, { onConflict: 'nome', ignoreDuplicates: true });
         }
-
+        
         // Inserir todos os tamanhos de roupas de uma vez
         if (allSizesRoupas.size > 0) {
-          const sizesToInsert = Array.from(allSizesRoupas).map(nome => ({ nome, tipo: 'roupa' }));
-          await supabase
-            .from('sizes')
-            .upsert(sizesToInsert, { onConflict: 'nome,tipo', ignoreDuplicates: true });
+          const sizesToInsert = Array.from(allSizesRoupas).map(nome => ({ nome, tipo: 'Roupas' }));
+          for (const size of sizesToInsert) {
+            try {
+              await supabase
+                .from('sizes')
+                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
+            } catch (error) {
+              console.warn(`Erro ao inserir tamanho ${size.nome}:`, error);
+            }
+          }
         }
-
+        
         // Inserir todos os tamanhos de calçados de uma vez
         if (allSizesCalcados.size > 0) {
-          const sizesToInsert = Array.from(allSizesCalcados).map(nome => ({ nome, tipo: 'calçado' }));
-          await supabase
-            .from('sizes')
-            .upsert(sizesToInsert, { onConflict: 'nome,tipo', ignoreDuplicates: true });
-        }
-
-        const brandMap = new Map<string, string>();
-        const roupaSizeMap = new Map<string, string>();
-        const calcadoSizeMap = new Map<string, string>();
-
-        if (allBrands.size > 0) {
-          const { data: brandsData } = await supabase
-            .from('brands')
-            .select('id, nome')
-            .in('nome', Array.from(allBrands));
-
-          brandsData?.forEach((brand) => {
-            if (brand.nome) {
-              brandMap.set(brand.nome, brand.id);
+          const sizesToInsert = Array.from(allSizesCalcados).map(nome => ({ nome, tipo: 'Calçados' }));
+          for (const size of sizesToInsert) {
+            try {
+              await supabase
+                .from('sizes')
+                .upsert(size, { onConflict: 'nome,tipo', ignoreDuplicates: true });
+            } catch (error) {
+              console.warn(`Erro ao inserir numeração ${size.nome}:`, error);
             }
-          });
-        }
-
-        if (allSizesRoupas.size > 0) {
-          const { data: roupaSizes } = await supabase
-            .from('sizes')
-            .select('id, nome')
-            .eq('tipo', 'roupa')
-            .in('nome', Array.from(allSizesRoupas));
-
-          roupaSizes?.forEach((size) => {
-            if (size.nome) {
-              roupaSizeMap.set(size.nome, size.id);
-            }
-          });
-        }
-
-        if (allSizesCalcados.size > 0) {
-          const { data: calcadoSizes } = await supabase
-            .from('sizes')
-            .select('id, nome')
-            .eq('tipo', 'calçado')
-            .in('nome', Array.from(allSizesCalcados));
-
-          calcadoSizes?.forEach((size) => {
-            if (size.nome) {
-              calcadoSizeMap.set(size.nome, size.id);
-            }
-          });
+          }
         }
 
         // Processar cada cliente
@@ -257,7 +204,43 @@ export default function Imports() {
             let existingClient = null;
             if (cpf) {
               const { data } = await supabase
-@@ -242,83 +296,98 @@ export default function Imports() {
+                .from('clients')
+                .select('*')
+                .eq('cpf', cpf)
+                .maybeSingle();
+              existingClient = data;
+            }
+            
+            // Se não encontrou por CPF, buscar por nome
+            if (!existingClient && nome) {
+              const { data } = await supabase
+                .from('clients')
+                .select('*')
+                .eq('nome', nome)
+                .maybeSingle();
+              existingClient = data;
+            }
+
+            let clientData;
+            
+            if (existingClient) {
+              // Cliente existe - atualizar apenas vendedora responsável
+              const { data: updatedClient } = await supabase
+                .from('clients')
+                .update({
+                  vendedora_responsavel: row.ultimo_vendedor?.toString().trim() || existingClient.vendedora_responsavel,
+                })
+                .eq('id', existingClient.id)
+                .select()
+                .single();
+              
+              clientData = updatedClient || existingClient;
+            } else {
+              // Cliente novo - inserir todos os dados
+              const { data: newClient, error: clientError } = await supabase
+                .from('clients')
+                .insert({
+                  nome,
                   cpf,
                   telefone_1: row.telefone_principal?.toString().trim() || null,
                   data_nascimento: birthDate ? new Date(birthDate).toISOString().split('T')[0] : null,
@@ -283,54 +266,39 @@ export default function Imports() {
 
             // Processar marcas - adicionar apenas as que não existem
             const marcas = processArrayField(row.marcas_compradas);
-            const tamanhosRoupas = processArrayField(row.tamanhos_comprados)
-              .map(sanitizeClothingSize)
-              .filter((t): t is string => Boolean(t));
-            const numeracoesCalcados = processArrayField(row.numeracao_comprados)
-              .map(sanitizeShoeSize)
-              .filter((n): n is string => Boolean(n));
+            
+            // Buscar marcas já vinculadas ao cliente
+            const { data: existingPrefs } = await supabase
+              .from('client_brand_preferences')
+              .select('brand_id, brands(nome)')
+              .eq('client_id', clientData.id);
+            
+            const existingBrandNames = new Set(
+              existingPrefs?.map((p: any) => p.brands?.nome).filter(Boolean) || []
+            );
+            
+            for (const marca of marcas) {
+              // Pular se marca já está vinculada
+              if (existingBrandNames.has(marca)) continue;
+              
+              try {
+                const { data: brandData } = await supabase
+                  .from('brands')
+                  .select('id')
+                  .eq('nome', marca)
+                  .maybeSingle();
 
-            if (marcas.length > 0) {
-              const brandPreferences = Array.from(new Set(marcas))
-                .map((marca) => brandMap.get(marca))
-                .filter((brandId): brandId is string => Boolean(brandId))
-                .map((brandId) => ({ client_id: clientData.id, brand_id: brandId }));
-
-              if (brandPreferences.length > 0) {
-                try {
+                if (brandData?.id) {
                   await supabase
                     .from('client_brand_preferences')
-                    .upsert(brandPreferences, {
-                      onConflict: 'client_id,brand_id',
-                      ignoreDuplicates: true,
-                    });
-                } catch (error: any) {
-                  console.warn(`Erro ao vincular marcas do cliente ${nome}:`, error.message);
+                    .insert({
+                      client_id: clientData.id,
+                      brand_id: brandData.id,
+                    })
+                    .select();
                 }
-              }
-            }
-
-            const sizePreferences = [
-              ...Array.from(new Set(tamanhosRoupas)).map((size) => {
-                const sizeId = roupaSizeMap.get(size);
-                return sizeId ? { client_id: clientData.id, size_id: sizeId } : null;
-              }),
-              ...Array.from(new Set(numeracoesCalcados)).map((size) => {
-                const sizeId = calcadoSizeMap.get(size);
-                return sizeId ? { client_id: clientData.id, size_id: sizeId } : null;
-              }),
-            ].filter((pref): pref is { client_id: string; size_id: string } => Boolean(pref));
-
-            if (sizePreferences.length > 0) {
-              try {
-                await supabase
-                  .from('client_size_preferences')
-                  .upsert(sizePreferences, {
-                    onConflict: 'client_id,size_id',
-                    ignoreDuplicates: true,
-                  });
               } catch (error: any) {
-                console.warn(`Erro ao vincular tamanhos do cliente ${nome}:`, error.message);
+                console.warn(`Erro ao vincular marca ${marca}:`, error.message);
               }
             }
 
@@ -338,6 +306,7 @@ export default function Imports() {
             if (row.total_gasto && lastPurchaseDate) {
               try {
                 const valorTotal = normalizeNumber(row.total_gasto);
+
 
                 // Tentar diferentes formatos para quantidade de compras
                 const qtdCompras =
@@ -359,17 +328,19 @@ export default function Imports() {
                     }
                   }
                 }
+
+                
                 console.log(`Cliente ${nome}: ${quantidadeCompras} compras, R$ ${valorTotal}`);
+                
                 if (valorTotal > 0 && quantidadeCompras > 0) {
                   // Buscar vendas existentes do cliente
                   const { data: existingSales, error: existingError } = await supabase
                     .from('sales')
                     .select(supportsPurchaseCount ? 'quantidade_compras, valor_total' : 'valor_total')
                     .eq('client_id', clientData.id);
-                                          if (existingError && !existingError.message?.includes('quantidade_compras')) {
+                  if (existingError && !existingError.message?.includes('quantidade_compras')) {
                     throw existingError;
                   }
-
 
 
                   // Totais já registrados no sistema
@@ -403,6 +374,15 @@ export default function Imports() {
                     await supabase
                       .from('sales')
                       .insert(saleRecord);
+                        client_id: clientData.id,
+                        cliente_nome: nome,
+                        data_venda: new Date(lastPurchaseDate).toISOString(),
+                        vendedora: row.ultimo_vendedor?.toString().trim() || '',
+                        quantidade_compras: deltaPurchases,
+                        quantidade_itens: 0,
+                        valor_total: deltaValue,
+                        ticket_medio: ticketMedio,
+                      });
                   } else {
                     console.log(`Cliente ${nome}: sem delta para inserir (${deltaPurchases} compras, R$ ${deltaValue})`);
                   }
@@ -577,15 +557,6 @@ export default function Imports() {
           description="Não disponível - use importação de clientes"
           status={salesStatus}
           result={salesResult}
-onFileSelect={(file) => handleFileUpload(file, 'clients')}
-          gradient="from-primary to-primary-glow"
-        />
-
-        <ImportCard
-          title="Importar Vendas"
-          description="Não disponível - use importação de clientes"
-          status={salesStatus}
-          result={salesResult}
           onFileSelect={(file) => handleFileUpload(file, 'sales')}
           gradient="from-accent to-secondary"
         />
@@ -602,14 +573,14 @@ onFileSelect={(file) => handleFileUpload(file, 'clients')}
               <li>• marcas_compradas, tamanhos_comprados, numeracao_comprados</li>
             </ul>
           </div>
-
+          
           <div>
             <p className="font-medium text-foreground mb-1">🏷️ Formato de Arrays:</p>
             <ul className="space-y-1 ml-4">
               <li>• Arrays devem estar no formato: ['ITEM1', 'ITEM2']</li>
               <li>• marcas_compradas → cria/vincula marcas</li>
-              <li>• tamanhos_comprados → cria tamanhos de roupas associados ao cliente</li>
-              <li>• numeracao_comprados → use valores como N-36; serão salvos como numerações de calçados do cliente</li>
+              <li>• tamanhos_comprados → cria tamanhos de Roupas</li>
+              <li>• numeracao_comprados → cria tamanhos de Calçados</li>
             </ul>
           </div>
 
